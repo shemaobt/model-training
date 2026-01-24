@@ -1,0 +1,16 @@
+{
+  "total_sequences": 10,
+  "unit_stats": {
+    "total_units": 7788,
+    "unique_units": 100,
+    "expected_unique": 100,
+    "unit_range": [
+      0,
+      99
+    ],
+    "avg_sequence_length": 778.8,
+    "min_sequence_length": 136,
+    "max_sequence_length": 1656
+  },
+  "synthesis_results": []
+}
