@@ -36,7 +36,7 @@ image = (
 
 # Mount points
 AUDIO_MOUNT = "/mnt/audio_data"
-SEGMENTED_DIR = f"{AUDIO_MOUNT}/segmented"
+SEGMENTED_DIR = f"{AUDIO_MOUNT}/segmented_audio"
 OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
 VOCODER_DIR = f"{AUDIO_MOUNT}/vocoder_checkpoints"
 
@@ -227,6 +227,20 @@ class UnitAudioDataset(Dataset):
                 missing_count += 1
         
         print(f"Loaded {len(self.samples)} valid samples ({missing_count} missing audio files)")
+        
+        # Debug: show sample of what we're looking for vs what exists
+        if len(self.samples) == 0 and missing_count > 0:
+            print("\\n🔍 Debug: Checking file matching...")
+            # List actual files in audio_dir
+            try:
+                actual_files = os.listdir(audio_dir)[:5]
+                print(f"   Sample actual files: {actual_files[:3]}")
+            except Exception as e:
+                print(f"   Could not list {audio_dir}: {e}")
+            
+            # Sample corpus entries
+            sample_keys = list(self.corpus.keys())[:3]
+            print(f"   Sample corpus keys: {sample_keys}")
         
     def _find_audio_file(self, segment_name):
         """Find audio file in segmented directory"""
