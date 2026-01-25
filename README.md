@@ -28,6 +28,11 @@ This project processes Portuguese Bible audio recordings to:
 - Computes audio quality metrics
 - Tests pipeline outputs
 
+### Vocoder Training (`modal_vocoder_train.py`)
+- Trains GAN-based vocoder (Generator + Discriminator)
+- Converts acoustic units back to audio waveform
+- Uses mel-spectrogram loss + adversarial loss
+
 ## Dataset
 
 - **Source**: Portuguese Bible (Old and New Testament)
@@ -71,6 +76,15 @@ python3 -m modal run --detach modal_phase2.py::main
 
 # Validation
 python3 -m modal run modal_checking.py::main
+
+# Vocoder training (100 epochs, ~4 hours)
+python3 -m modal run --detach modal_vocoder_train.py::main --epochs 100
+
+# Resume vocoder training
+python3 -m modal run --detach modal_vocoder_train.py::main --resume vocoder_latest.pt
+
+# Synthesize audio with trained vocoder
+python3 -m modal run modal_checking.py::main --generator-checkpoint /mnt/audio_data/vocoder_checkpoints/vocoder_final.pt
 ```
 
 ### Download Results
