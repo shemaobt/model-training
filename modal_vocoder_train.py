@@ -320,15 +320,17 @@ class UnitAudioDataset(Dataset):
 @app.function(
     image=image,
     volumes={AUDIO_MOUNT: audio_volume},
-    timeout=14400,  # 4 hours
+    timeout=43200,  # 12 hours
     gpu="A10G",
 )
 def train_vocoder(
     epochs: int = 100,
     batch_size: int = 16,
     learning_rate: float = 0.0002,
-    save_every: int = 10,
+    save_every: int = 5,
     resume_from: str = None,
+    patience: int = 10,
+    min_delta: float = 0.01,
 ):
     """
     Train the vocoder (Generator) using GAN training
@@ -468,8 +470,14 @@ def train_vocoder(
     
     # ========== Training Loop ==========
     print(f"\n🚀 Starting training for {epochs} epochs...")
+    print(f"   Early stopping: patience={patience}, min_delta={min_delta}")
     
     training_log = []
+    
+    # Early stopping state
+    best_mel_loss = float('inf')
+    epochs_without_improvement = 0
+    best_checkpoint_path = None
     
     for epoch in range(start_epoch, epochs):
         generator.train()
@@ -562,6 +570,20 @@ def train_vocoder(
             'mel_loss': avg_mel_loss,
         })
         
+        # ===== Early Stopping Check =====
+        if avg_mel_loss < best_mel_loss - min_delta:
+            best_mel_loss = avg_mel_loss
+            epochs_without_improvement = 0
+            print(f"  ✓ New best mel loss: {best_mel_loss:.4f}")
+        else:
+            epochs_without_improvement += 1
+            print(f"  ⚠️  No improvement for {epochs_without_improvement}/{patience} epochs")
+        
+        if epochs_without_improvement >= patience:
+            print(f"\n🛑 Early stopping triggered! No improvement for {patience} epochs.")
+            print(f"   Best mel loss: {best_mel_loss:.4f}")
+            break
+        
         # ===== Save Checkpoint =====
         if (epoch + 1) % save_every == 0 or (epoch + 1) == epochs:
             checkpoint_path = os.path.join(VOCODER_DIR, f"vocoder_epoch_{epoch+1:04d}.pt")
@@ -635,25 +657,30 @@ def main(
     epochs: int = 100,
     batch_size: int = 16,
     lr: float = 0.0002,
-    save_every: int = 10,
+    save_every: int = 5,
     resume: str = None,
+    patience: int = 10,
+    min_delta: float = 0.01,
 ):
     """
     Train the vocoder model
     
     Args:
-        epochs: Number of training epochs (default: 100)
+        epochs: Maximum training epochs (default: 100)
         batch_size: Batch size (default: 16)
         lr: Learning rate (default: 0.0002)
-        save_every: Save checkpoint every N epochs (default: 10)
+        save_every: Save checkpoint every N epochs (default: 5)
         resume: Path to checkpoint to resume from (optional)
+        patience: Early stopping patience - epochs without improvement (default: 10)
+        min_delta: Minimum improvement to reset patience (default: 0.01)
     """
     print("🎵 Starting Vocoder Training on Modal")
     print("=" * 60)
-    print(f"  Epochs: {epochs}")
+    print(f"  Max epochs: {epochs}")
     print(f"  Batch size: {batch_size}")
     print(f"  Learning rate: {lr}")
     print(f"  Save every: {save_every} epochs")
+    print(f"  Early stopping: patience={patience}, min_delta={min_delta}")
     if resume:
         print(f"  Resume from: {resume}")
     print("=" * 60)
@@ -668,6 +695,8 @@ def main(
         learning_rate=lr,
         save_every=save_every,
         resume_from=resume_path,
+        patience=patience,
+        min_delta=min_delta,
     )
     
     if result:
