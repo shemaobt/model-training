@@ -192,11 +192,12 @@ class UnitAudioDataset(Dataset):
         ...
     }
     """
-    def __init__(self, corpus_path, audio_dir, segment_length=16000, hop_size=320):
+    def __init__(self, corpus_path, audio_dir, segment_length=16000, hop_size=320, samples_per_epoch=10000):
         self.audio_dir = audio_dir
         self.segment_length = segment_length  # 1 second at 16kHz
         self.hop_size = hop_size  # ~20ms per frame (matches XLSR-53)
         self.unit_length = segment_length // hop_size  # units per segment
+        self.samples_per_epoch = samples_per_epoch
         
         # Load corpus - it's a dict with segment names as keys
         print(f"Loading corpus from {corpus_path}...")
@@ -253,7 +254,10 @@ class UnitAudioDataset(Dataset):
         return None
     
     def __len__(self):
-        return len(self.samples) * 10  # Multiple segments per file
+        # Use smaller epochs for faster iteration and more frequent checkpoints
+        # Default: 10,000 samples per epoch = ~625 batches = ~2 min per epoch
+        # This allows more frequent early stopping checks and checkpoints
+        return self.samples_per_epoch
     
     def __getitem__(self, idx):
         sample_idx = idx % len(self.samples)
@@ -324,13 +328,14 @@ class UnitAudioDataset(Dataset):
     gpu="A10G",
 )
 def train_vocoder(
-    epochs: int = 100,
+    epochs: int = 500,
     batch_size: int = 16,
     learning_rate: float = 0.0002,
-    save_every: int = 5,
+    save_every: int = 20,
     resume_from: str = None,
-    patience: int = 10,
-    min_delta: float = 0.01,
+    patience: int = 50,
+    min_delta: float = 0.5,
+    samples_per_epoch: int = 10000,
 ):
     """
     Train the vocoder (Generator) using GAN training
@@ -396,6 +401,7 @@ def train_vocoder(
         corpus_path=corpus_path,
         audio_dir=SEGMENTED_DIR,
         segment_length=16000,  # 1 second
+        samples_per_epoch=samples_per_epoch,
     )
     
     if len(dataset.samples) == 0:
@@ -654,31 +660,34 @@ def train_vocoder(
 
 @app.local_entrypoint()
 def main(
-    epochs: int = 100,
+    epochs: int = 500,
     batch_size: int = 16,
     lr: float = 0.0002,
-    save_every: int = 5,
+    save_every: int = 20,
     resume: str = None,
-    patience: int = 10,
-    min_delta: float = 0.01,
+    patience: int = 50,
+    min_delta: float = 0.5,
+    samples_per_epoch: int = 10000,
 ):
     """
     Train the vocoder model
     
     Args:
-        epochs: Maximum training epochs (default: 100)
+        epochs: Maximum training epochs (default: 500)
         batch_size: Batch size (default: 16)
         lr: Learning rate (default: 0.0002)
-        save_every: Save checkpoint every N epochs (default: 5)
+        save_every: Save checkpoint every N epochs (default: 20)
         resume: Path to checkpoint to resume from (optional)
-        patience: Early stopping patience - epochs without improvement (default: 10)
-        min_delta: Minimum improvement to reset patience (default: 0.01)
+        patience: Early stopping patience - epochs without improvement (default: 50)
+        min_delta: Minimum improvement to reset patience (default: 0.5)
+        samples_per_epoch: Samples per epoch for faster iterations (default: 10000)
     """
     print("🎵 Starting Vocoder Training on Modal")
     print("=" * 60)
     print(f"  Max epochs: {epochs}")
     print(f"  Batch size: {batch_size}")
     print(f"  Learning rate: {lr}")
+    print(f"  Samples per epoch: {samples_per_epoch}")
     print(f"  Save every: {save_every} epochs")
     print(f"  Early stopping: patience={patience}, min_delta={min_delta}")
     if resume:
@@ -697,6 +706,7 @@ def main(
         resume_from=resume_path,
         patience=patience,
         min_delta=min_delta,
+        samples_per_epoch=samples_per_epoch,
     )
     
     if result:
