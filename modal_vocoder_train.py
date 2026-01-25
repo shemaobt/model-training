@@ -449,6 +449,11 @@ def train_vocoder(
         """L1 loss on mel spectrograms"""
         import torchaudio.transforms as T
         
+        # Match lengths - truncate to shorter
+        min_len = min(real_audio.shape[-1], fake_audio.shape[-1])
+        real_audio = real_audio[..., :min_len]
+        fake_audio = fake_audio[..., :min_len]
+        
         mel_transform = T.MelSpectrogram(
             sample_rate=16000,
             n_fft=1024,
