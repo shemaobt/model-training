@@ -55,9 +55,9 @@ class Generator(nn.Module):
     Unit-to-Waveform Generator (Vocoder)
     Converts discrete acoustic units to raw audio waveform
     
-    Upsampling factor: 5 * 5 * 4 * 4 * 2 = 800x
+    Upsampling factor: 5 * 4 * 4 * 4 = 320x (matches XLSR-53 hop size)
     Input: [B, T] unit indices
-    Output: [B, T*800] audio samples at 16kHz
+    Output: [B, T*320] audio samples at 16kHz (~20ms per unit)
     """
     def __init__(self, num_units=100, embed_dim=256):
         super().__init__()
@@ -66,13 +66,12 @@ class Generator(nn.Module):
         self.unit_embed = nn.Embedding(num_units, embed_dim)
         self.pre_conv = nn.Conv1d(embed_dim, 512, 7, padding=3)
         
-        # Upsample blocks: 5*5*4*4*2 = 800x total
+        # Upsample blocks: 5*4*4*4 = 320x total (matches ~20ms XLSR-53 frame rate)
         self.upsamples = nn.ModuleList([
             self._make_upsample_block(512, 256, kernel=10, stride=5),
-            self._make_upsample_block(256, 128, kernel=10, stride=5),
+            self._make_upsample_block(256, 128, kernel=8, stride=4),
             self._make_upsample_block(128, 64, kernel=8, stride=4),
             self._make_upsample_block(64, 32, kernel=8, stride=4),
-            self._make_upsample_block(32, 32, kernel=4, stride=2),
         ])
         
         # Residual blocks for better quality
