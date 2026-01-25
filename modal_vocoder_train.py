@@ -184,6 +184,13 @@ import json
 class UnitAudioDataset(Dataset):
     """
     Dataset that pairs unit sequences with their source audio
+    
+    Corpus format:
+    {
+        "segment_name_seg_0000": {"units": [...], "timestamps": [...]},
+        "segment_name_seg_0001": {"units": [...], "timestamps": [...]},
+        ...
+    }
     """
     def __init__(self, corpus_path, audio_dir, segment_length=16000, hop_size=320):
         self.audio_dir = audio_dir
@@ -191,39 +198,41 @@ class UnitAudioDataset(Dataset):
         self.hop_size = hop_size  # ~20ms per frame (matches XLSR-53)
         self.unit_length = segment_length // hop_size  # units per segment
         
-        # Load corpus with file -> units mapping
+        # Load corpus - it's a dict with segment names as keys
         print(f"Loading corpus from {corpus_path}...")
         with open(corpus_path, 'r') as f:
             self.corpus = json.load(f)
         
+        print(f"Corpus has {len(self.corpus)} entries")
+        
         # Build list of valid samples
         self.samples = []
-        for entry in self.corpus:
-            audio_file = entry.get('file', entry.get('filename', ''))
-            units = entry.get('units', [])
+        missing_count = 0
+        
+        for segment_name, data in self.corpus.items():
+            units = data.get('units', [])
             
-            if not audio_file or not units:
+            if not units:
                 continue
             
             # Find corresponding audio file
-            audio_path = self._find_audio_file(audio_file)
+            audio_path = self._find_audio_file(segment_name)
             if audio_path and os.path.exists(audio_path):
                 self.samples.append({
                     'audio_path': audio_path,
                     'units': units,
+                    'name': segment_name,
                 })
+            else:
+                missing_count += 1
         
-        print(f"Loaded {len(self.samples)} valid samples")
+        print(f"Loaded {len(self.samples)} valid samples ({missing_count} missing audio files)")
         
-    def _find_audio_file(self, filename):
+    def _find_audio_file(self, segment_name):
         """Find audio file in segmented directory"""
-        # Try direct path
-        base = os.path.basename(filename)
-        base_no_ext = os.path.splitext(base)[0]
-        
         # Try .wav extension
         for ext in ['.wav', '.WAV']:
-            path = os.path.join(self.audio_dir, base_no_ext + ext)
+            path = os.path.join(self.audio_dir, segment_name + ext)
             if os.path.exists(path):
                 return path
         
