@@ -38,10 +38,16 @@ local_segments/
 modal_downloads/phase1_outputs/
 modal_downloads/sample_audio/
 
-# Large binary files
-*.wav
-*.mp3
+# Vocoder - keep test samples, ignore large checkpoints
+modal_downloads/vocoder/*.pt
+modal_downloads/vocoder/sample_epoch_*.wav
+
+# Keep vocoder test comparison samples (small)
+!modal_downloads/vocoder_test/
+
+# Large binary files (except vocoder test samples)
 *.pkl
+*.mp3
 
 # OS files
 .DS_Store

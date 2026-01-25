@@ -1,0 +1,172 @@
+{
+  "num_samples": 20,
+  "samples": [
+    {
+      "segment_name": "I COR\u00cdNTIOS - a primeira carta de Paulo a igreja d...",
+      "original_length_sec": 12.075,
+      "synth_length_sec": 12.064,
+      "num_units": 603,
+      "snr_db": -2.8575302528464066,
+      "mcd": 88.90134450338314
+    },
+    {
+      "segment_name": "ISA\u00cdAS \ud83d\udcd6 A Palavra de Deus ao profeta ISA\u00cdAS, filh...",
+      "original_length_sec": 6.545,
+      "synth_length_sec": 6.544,
+      "num_units": 327,
+      "snr_db": -1.6541306007198366,
+      "mcd": 105.13670005763127
+    },
+    {
+      "segment_name": "II REIS \ud83d\udcd6 B\u00edblia Sagrada \u2013 O Segundo Livro dos Rei...",
+      "original_length_sec": 2.185,
+      "synth_length_sec": 2.184,
+      "num_units": 109,
+      "snr_db": -2.212217213633503,
+      "mcd": 126.14845312704288
+    },
+    {
+      "segment_name": "O EVANGELHO DE MATEUS (Par\u00e1bolas de JESUS, segundo...",
+      "original_length_sec": 15.55,
+      "synth_length_sec": 15.544,
+      "num_units": 777,
+      "snr_db": -1.6430543773019846,
+      "mcd": 93.26837592206856
+    },
+    {
+      "segment_name": "O EVANGELHO DE MATEUS (Par\u00e1bolas de JESUS, segundo...",
+      "original_length_sec": 6.045,
+      "synth_length_sec": 6.044,
+      "num_units": 302,
+      "snr_db": -1.6256601957481165,
+      "mcd": 92.06481675853007
+    },
+    {
+      "segment_name": "G\u00caNESIS \ud83d\udcd6 Ad\u00e3o, No\u00e9, Abra\u00e3o, Isaque, Jac\u00f3, Jos\u00e9 no...",
+      "original_length_sec": 5.265,
+      "synth_length_sec": 5.264,
+      "num_units": 263,
+      "snr_db": -2.183420458026708,
+      "mcd": 111.59837301976782
+    },
+    {
+      "segment_name": "Evangelho de JO\u00c3O (no Pr\u00edncipio era O Verbo, O ver...",
+      "original_length_sec": 2.855,
+      "synth_length_sec": 2.844,
+      "num_units": 142,
+      "snr_db": -2.2175887628178215,
+      "mcd": 95.81801923014699
+    },
+    {
+      "segment_name": "\ud83d\udd34 \u00caXODO \ud83d\udcd6 (a Sa\u00edda de Israel do Egito) B\u00edblia Narr...",
+      "original_length_sec": 3.245,
+      "synth_length_sec": 3.244,
+      "num_units": 162,
+      "snr_db": -2.2826913811235157,
+      "mcd": 108.95110802918357
+    },
+    {
+      "segment_name": "N\u00daMEROS Ouvir o Livro B\u00edblico Completo (BAMIDBAR)_...",
+      "original_length_sec": 2.135,
+      "synth_length_sec": 2.124,
+      "num_units": 106,
+      "snr_db": -1.6331960325933972,
+      "mcd": 114.7661082368924
+    },
+    {
+      "segment_name": "G\u00caNESIS \ud83d\udcd6 Ad\u00e3o, No\u00e9, Abra\u00e3o, Isaque, Jac\u00f3, Jos\u00e9 no...",
+      "original_length_sec": 6.955,
+      "synth_length_sec": 6.944,
+      "num_units": 347,
+      "snr_db": -1.8878376878021152,
+      "mcd": 81.62073530274844
+    },
+    {
+      "segment_name": "Profeta EZEQUIEL - A Palavra de Deus dada ao sacer...",
+      "original_length_sec": 13.34,
+      "synth_length_sec": 13.324,
+      "num_units": 666,
+      "snr_db": -2.014387107678205,
+      "mcd": 78.15975385861059
+    },
+    {
+      "segment_name": "I REIS \u2013 B\u00edblia Completa (O Primeiro Livro dos Rei...",
+      "original_length_sec": 2.08,
+      "synth_length_sec": 2.064,
+      "num_units": 103,
+      "snr_db": -1.8660086418469122,
+      "mcd": 118.18941990117138
+    },
+    {
+      "segment_name": "Profeta EZEQUIEL - A Palavra de Deus dada ao sacer...",
+      "original_length_sec": 5.125,
+      "synth_length_sec": 5.124,
+      "num_units": 256,
+      "snr_db": -1.8885629970246565,
+      "mcd": 98.35850781688374
+    },
+    {
+      "segment_name": "II SAMUEL - O Reinado de Davi em ISRAEL (B\u00edblia Sa...",
+      "original_length_sec": 20.48,
+      "synth_length_sec": 20.464,
+      "num_units": 1023,
+      "snr_db": -1.8733283627905966,
+      "mcd": 77.97932477372574
+    },
+    {
+      "segment_name": "APOCALIPSE \ud83d\udcd6 A B\u00edblia da Revela\u00e7\u00e3o de Jesus Cristo...",
+      "original_length_sec": 4.11,
+      "synth_length_sec": 4.104,
+      "num_units": 205,
+      "snr_db": -1.9216821298506048,
+      "mcd": 80.76057982400134
+    },
+    {
+      "segment_name": "O EVANGELHO de MARCOS (Pr\u00edncipio do evangelho de J...",
+      "original_length_sec": 27.955,
+      "synth_length_sec": 27.944,
+      "num_units": 1397,
+      "snr_db": -1.6775472397136437,
+      "mcd": 94.81615668428782
+    },
+    {
+      "segment_name": "II SAMUEL - O Reinado de Davi em ISRAEL (B\u00edblia Sa...",
+      "original_length_sec": 34.87,
+      "synth_length_sec": 34.864,
+      "num_units": 1743,
+      "snr_db": -2.006033642302233,
+      "mcd": 82.88034367888865
+    },
+    {
+      "segment_name": "\ud83d\udd34 \u00caXODO \ud83d\udcd6 (a Sa\u00edda de Israel do Egito) B\u00edblia Narr...",
+      "original_length_sec": 3.565,
+      "synth_length_sec": 3.564,
+      "num_units": 178,
+      "snr_db": -1.2666566287624796,
+      "mcd": 100.07785932669256
+    },
+    {
+      "segment_name": "II REIS \ud83d\udcd6 B\u00edblia Sagrada \u2013 O Segundo Livro dos Rei...",
+      "original_length_sec": 51.77,
+      "synth_length_sec": 51.764,
+      "num_units": 2588,
+      "snr_db": -1.746157718251985,
+      "mcd": 81.87420490461199
+    },
+    {
+      "segment_name": "JEREMIAS (O Profeta Jeremias A B\u00edblia em \u00c1udio Liv...",
+      "original_length_sec": 4.535,
+      "synth_length_sec": 4.524,
+      "num_units": 226,
+      "snr_db": -2.5115898584408214,
+      "mcd": 95.68978182199709
+    }
+  ],
+  "aggregate_metrics": {
+    "mean_snr_db": -1.9484640644637772,
+    "std_snr_db": 0.3495133950931986,
+    "mean_mcd": 96.3529983389133,
+    "std_mcd": 13.777228348131665,
+    "samples_tested": 20
+  }
+}
