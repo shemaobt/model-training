@@ -30,6 +30,70 @@ flowchart LR
     style D fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
+## 🎯 What This Pipeline Produces
+
+After completing all 3 phases, you have a **Speech Synthesis (Vocoder) System** for the target language.
+
+```mermaid
+flowchart LR
+    subgraph Input
+        A[Acoustic Units<br/>31 87 14 43...]
+    end
+    
+    subgraph TrainedModel ["Trained Vocoder (Phase 3)"]
+        B[Generator V2<br/>HiFi-GAN + Pitch]
+    end
+    
+    subgraph Output
+        C[🔊 Natural Audio<br/>16kHz WAV]
+    end
+    
+    A --> B --> C
+    
+    style B fill:#f9f,stroke:#333,stroke-width:2px
+```
+
+### Phase Outputs
+
+| Phase | Output | Purpose |
+|-------|--------|---------|
+| **Phase 1** | K-Means model + Unit sequences | Creates a "vocabulary" of ~100 speech sounds (learned phonemes) |
+| **Phase 2** | BPE tokenizer + Motif analysis | Discovers common sound patterns (optional, for linguistic analysis) |
+| **Phase 3** | **Vocoder model** (.pt file) | Neural network that converts unit sequences → audio waveforms |
+
+### Use Cases
+
+#### 1. Speech-to-Speech Translation
+```
+Source Audio → ASR → Translation → Unit Prediction → [Your Vocoder] → Target Audio
+                                                          ↑
+                                                    (This is what you train)
+```
+Translate from Portuguese to Sateré, then synthesize natural Sateré speech.
+
+#### 2. Voice Preservation for Endangered Languages
+- Train on native speaker recordings → Generate new speech in that voice/language
+- Preserve acoustic characteristics of indigenous languages like Sateré-Mawé
+
+#### 3. Audio Bible Generation
+- Convert text (via text-to-unit model) → audio narration in the target language
+- Generate consistent, natural-sounding Bible readings
+
+#### 4. Low-Resource TTS Foundation
+- The vocoder is the acoustic backend for any TTS system
+- Pair with a Text-to-Unit model for complete text-to-speech
+
+### What's Needed for Full TTS?
+
+This pipeline trains the **acoustic model (vocoder)**: `Units → Audio`
+
+For complete **Text → Speech**, you also need: `Text → Units` (not included here)
+
+Options for Text-to-Unit:
+- Tacotron-style sequence-to-sequence model
+- Translation model that outputs units instead of text
+- GPT-style language model trained on unit sequences
+
 ## 🏗️ Pipeline Architecture
 
 The pipeline consists of three distinct training phases.
@@ -127,6 +191,64 @@ python3 -m modal run src/training/run_full_pipeline.py::main --phases 2,3
 
 # Run only vocoder training (Phases 1 & 2 already done)
 python3 -m modal run src/training/run_full_pipeline.py::main --phases 3
+```
+
+## 🌍 Multi-Language Support
+
+All training scripts support multiple languages via the `--language` parameter.
+
+### Supported Languages
+
+| Language | Code | Segmented Audio | Units Output | Vocoder Checkpoints |
+|----------|------|-----------------|--------------|---------------------|
+| Portuguese | `portuguese` | `segmented_audio/` | `portuguese_units/` | `vocoder_v2_checkpoints/` |
+| Sateré-Mawé | `satere` | `segmented_audio_satere/` | `satere_units/` | `vocoder_v2_satere_checkpoints/` |
+
+### Training a New Language
+
+```bash
+# 1. Segment locally
+python scripts/segment_audio.py --language satere
+
+# 2. Upload to Modal
+python3 -m modal run scripts/upload_to_modal.py --language satere
+
+# 3. Run full pipeline for Sateré
+python3 -m modal run src/training/run_full_pipeline.py::main --language satere
+
+# OR run phases individually
+python3 -m modal run --detach src/training/phase1_acoustic.py::main_skip_segmentation --language satere
+python3 -m modal run --detach src/training/phase2_bpe.py::main --language satere
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --language satere
+```
+
+### Testing & Downloading Results
+
+```bash
+# Test Sateré vocoder
+python3 -m modal run src/training/vocoder_test_v2.py::main --language satere --num-samples 50
+
+# Download Sateré checkpoints
+modal volume get bible-audio-data vocoder_v2_satere_checkpoints/ ./modal_downloads/vocoder_v2_satere/
+
+# Download test results
+modal volume get bible-audio-data vocoder_v2_satere_test_output/ ./modal_downloads/vocoder_v2_satere_test/
+```
+
+### Adding a New Language
+
+To add support for a new language, update the `LANGUAGE_CONFIGS` dictionary in each training script:
+
+```python
+LANGUAGE_CONFIGS = {
+    # ... existing languages ...
+    "new_language": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_new",
+        "output_dir": f"{AUDIO_MOUNT}/new_language_units",
+        "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_new_checkpoints",
+        "corpus_file": "new_language_corpus_timestamped.json",
+    },
+}
 ```
 
 ## 🎯 V2 Vocoder (Enhanced)
