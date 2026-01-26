@@ -27,9 +27,10 @@ env/
 venv/
 ENV/
 
-# Jupyter Notebook
+# Jupyter
 .ipynb_checkpoints/
 *.ipynb_checkpoints
+*.ipynb
 
 # Large data files (stored on Modal volume)
 local_segments/
@@ -45,7 +46,7 @@ modal_downloads/vocoder/sample_epoch_*.wav
 # Keep vocoder test comparison samples (small)
 !modal_downloads/vocoder_test/
 
-# Large binary files (except vocoder test samples)
+# Large binary files
 *.pkl
 *.mp3
 
@@ -70,7 +71,6 @@ Thumbs.db
 *.log
 
 # Credentials (never commit)
-.env
 .env.*
 credentials.json
 *.key
