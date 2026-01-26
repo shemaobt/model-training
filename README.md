@@ -80,7 +80,7 @@ python3 -m modal token set --token-id <id> --token-secret <secret>
 
 ### Execution Flow
 
-**1. Segment Audio Locally** (Generic support for multiple languages)
+**1. Segment Audio Locally** (one-time, run on your machine)
 ```bash
 # For Portuguese
 python scripts/segment_audio.py --language portuguese
@@ -89,63 +89,99 @@ python scripts/segment_audio.py --language portuguese
 python scripts/segment_audio.py --language satere
 ```
 
-**2. Upload to Cloud Storage**
+**2. Upload to Cloud Storage** (one-time, run on your machine)
 ```bash
-python3 -m modal run scripts/upload_to_modal.py --language satere
+python3 -m modal run scripts/upload_to_modal.py --language portuguese
 ```
 
 **3. Run Training Pipeline (on Modal)**
+
+#### Option A: Run All Phases at Once (Recommended)
 ```bash
-# Phase 1: Discover acoustic units
+# Run full pipeline with V2 vocoder (best quality)
+python3 -m modal run src/training/run_full_pipeline.py::main
+
+# Run full pipeline with V1 vocoder (faster, simpler)
+python3 -m modal run src/training/run_full_pipeline.py::main --vocoder-version v1
+```
+
+#### Option B: Run Phases Individually
+```bash
+# Phase 1: Discover acoustic units (~2-4 hours)
 python3 -m modal run --detach src/training/phase1_acoustic.py
 
-# Phase 2: Learn motifs (BPE)
+# Phase 2: Learn motifs/BPE (~30 min)
 python3 -m modal run --detach src/training/phase2_bpe.py
 
-# Phase 3: Train Vocoder (Original - simpler, faster)
-python3 -m modal run --detach src/training/phase3_vocoder.py
-
-# Phase 3 V2: Train Enhanced Vocoder (recommended for quality)
+# Phase 3 V2: Train Enhanced Vocoder (~4-8 hours) ⭐ RECOMMENDED
 python3 -m modal run --detach src/training/phase3_vocoder_v2.py
+
+# OR Phase 3 V1: Train Original Vocoder (~2-4 hours)
+python3 -m modal run --detach src/training/phase3_vocoder.py
+```
+
+#### Option C: Run Only Specific Phases
+```bash
+# Skip Phase 1 (already done), run 2 and 3
+python3 -m modal run src/training/run_full_pipeline.py::main --phases 2,3
+
+# Run only vocoder training (Phases 1 & 2 already done)
+python3 -m modal run src/training/run_full_pipeline.py::main --phases 3
 ```
 
 ## 🎯 V2 Vocoder (Enhanced)
 
-The V2 vocoder addresses the "robotic audio" problem with several improvements:
+The V2 vocoder addresses the "robotic audio" problem with several improvements.
+
+> **Note**: V2 only affects **Phase 3** (vocoder training). Phases 1 and 2 remain the same.
+> You must run Phases 1 and 2 first before training V2.
+
+### Prerequisites for V2
+```bash
+# Ensure Phases 1 and 2 are complete (check Modal volume)
+modal volume ls bible-audio-data portuguese_units/
+# Should show: portuguese_kmeans.pkl, all_units_for_bpe.txt, portuguese_corpus_timestamped.json
+```
 
 ### Key Improvements
-- **Pitch Conditioning**: Extracts F0 and conditions generator on pitch for natural prosody
-- **HiFi-GAN Architecture**: Multi-Receptive Field Fusion in generator
-- **MPD + MSD Discriminators**: Multi-Period + Multi-Scale for comprehensive quality control
-- **Enhanced Losses**: Mel + Multi-STFT + Feature Matching + Adversarial
-- **Spectral Normalization**: Prevents discriminator collapse
-- **2-Second Segments**: Better prosody learning (vs 1-second in V1)
+| Feature | V1 | V2 |
+|---------|----|----|
+| Pitch conditioning | ❌ | ✅ 32-bin F0 embedding |
+| Generator | Simple TransConv | HiFi-GAN with MRF |
+| Discriminator | MSD only | MPD + MSD |
+| Losses | Mel + Adversarial | Mel + STFT + FM + Adversarial |
+| Segment length | 1 second | 2 seconds |
+| Audio quality | Robotic | Natural prosody |
 
-### V2 Training
+### V2 Training Commands
 ```bash
-# Full training with all improvements
+# RECOMMENDED: Full pipeline with V2
+python3 -m modal run src/training/run_full_pipeline.py::main
+
+# OR: Only V2 vocoder (if Phases 1 & 2 done)
 python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main
 
 # Custom parameters
 python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main \
     --epochs 1000 --segment-length 32000 --patience 100
 
-# Resume training
+# Resume training from checkpoint
 python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --resume v2_latest.pt
 ```
 
 ### V2 Testing
 ```bash
-# Test quality metrics
+# Test quality metrics (after training)
 python3 -m modal run src/training/vocoder_test_v2.py::main --num-samples 50
 
-# Download results
+# Download test results
 modal volume get bible-audio-data vocoder_v2_test_output/ ./modal_downloads/vocoder_v2_test/
 ```
 
-**Documentation:**
-- [docs/VOCODER_V2_ARCHITECTURE.md](docs/VOCODER_V2_ARCHITECTURE.md) - Complete V2 technical guide with diagrams
+### V2 Documentation
+- [docs/VOCODER_V2_ARCHITECTURE.md](docs/VOCODER_V2_ARCHITECTURE.md) - Complete technical guide with diagrams
 - [docs/ROBOTIC_AUDIO_ANALYSIS.md](docs/ROBOTIC_AUDIO_ANALYSIS.md) - Why V1 sounds robotic + solutions
+- [docs/SEGMENT_PREPARATION.md](docs/SEGMENT_PREPARATION.md) - Segment size impact and recommendations
 
 ## 📂 Project Structure
 
@@ -158,6 +194,7 @@ model-training/
 │   │   ├── discriminator.py       # V1 Multi-Scale Discriminator
 │   │   └── discriminator_v2.py    # V2 MPD + MSD with spectral norm
 │   ├── training/                  # Cloud Training Scripts
+│   │   ├── run_full_pipeline.py   # 🚀 Run all phases at once
 │   │   ├── phase1_acoustic.py     # Feature extraction & clustering
 │   │   ├── phase2_bpe.py          # BPE motif discovery
 │   │   ├── phase3_vocoder.py      # V1 GAN training (simpler)
