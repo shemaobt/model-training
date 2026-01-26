@@ -465,11 +465,18 @@ def stft_loss(real, fake, fft_sizes=[512, 1024, 2048], hop_sizes=[50, 120, 240],
     return (sc_loss + mag_loss) / len(fft_sizes)
 
 def feature_matching_loss(real_features, fake_features):
-    """L1 loss on discriminator features."""
+    """L1 loss on discriminator features with size alignment."""
     loss = 0.0
     for rf_list, ff_list in zip(real_features, fake_features):
         for rf, ff in zip(rf_list, ff_list):
-            loss += F.l1_loss(ff, rf.detach())
+            # Align sizes - take minimum length along each dimension
+            min_sizes = [min(rf.size(i), ff.size(i)) for i in range(rf.dim())]
+            rf_aligned = rf
+            ff_aligned = ff
+            for dim in range(rf.dim()):
+                rf_aligned = rf_aligned.narrow(dim, 0, min_sizes[dim])
+                ff_aligned = ff_aligned.narrow(dim, 0, min_sizes[dim])
+            loss += F.l1_loss(ff_aligned, rf_aligned.detach())
     return loss
 
 def discriminator_loss(real_outputs, fake_outputs):
@@ -644,8 +651,13 @@ def train_vocoder_v2(
             with torch.no_grad():
                 fake_audio = generator(units, pitch)
             
-            real_scores, real_features = discriminator(real_audio)
-            fake_scores, fake_features = discriminator(fake_audio)
+            # Align fake audio length to real audio length
+            min_len = min(real_audio.size(-1), fake_audio.size(-1))
+            real_audio_aligned = real_audio[..., :min_len]
+            fake_audio_aligned = fake_audio[..., :min_len]
+            
+            real_scores, real_features = discriminator(real_audio_aligned)
+            fake_scores, fake_features = discriminator(fake_audio_aligned)
             
             d_loss = loss_module.discriminator_loss(real_scores, fake_scores)
             
@@ -656,12 +668,18 @@ def train_vocoder_v2(
             optimizer_g.zero_grad()
             
             fake_audio = generator(units, pitch)
-            fake_scores, fake_features = discriminator(fake_audio)
-            _, real_features = discriminator(real_audio)
             
-            # Losses
-            mel_loss = loss_module.mel_spectrogram_loss(real_audio, fake_audio)
-            stft_loss = loss_module.stft_loss(real_audio, fake_audio)
+            # Align fake audio length to real audio length
+            min_len = min(real_audio.size(-1), fake_audio.size(-1))
+            real_audio_aligned = real_audio[..., :min_len]
+            fake_audio_aligned = fake_audio[..., :min_len]
+            
+            fake_scores, fake_features = discriminator(fake_audio_aligned)
+            _, real_features = discriminator(real_audio_aligned)
+            
+            # Losses (use aligned audio)
+            mel_loss = loss_module.mel_spectrogram_loss(real_audio_aligned, fake_audio_aligned)
+            stft_loss = loss_module.stft_loss(real_audio_aligned, fake_audio_aligned)
             fm_loss = loss_module.feature_matching_loss(real_features, fake_features)
             adv_loss = loss_module.generator_adversarial_loss(fake_scores)
             
