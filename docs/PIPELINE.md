@@ -1,6 +1,18 @@
 # Pipeline Execution Guide
 
-This document explains how to run each phase of the acoustic tokenization pipeline.
+This document explains how to run each phase of the acoustic tokenization and vocoder training pipeline.
+
+## Table of Contents
+
+1. [Prerequisites](#prerequisites)
+2. [Phase 0: Data Preparation](#phase-0-data-preparation)
+3. [Phase 1: Acoustic Tokenization](#phase-1-acoustic-tokenization)
+4. [Phase 2: BPE Motif Discovery](#phase-2-bpe-motif-discovery)
+5. [Phase 3: Vocoder Training](#phase-3-vocoder-training)
+6. [Testing & Validation](#testing--validation)
+7. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
+
+---
 
 ## Prerequisites
 
@@ -8,25 +20,31 @@ This document explains how to run each phase of the acoustic tokenization pipeli
 
 ```bash
 # Install dependencies
-pip install modal torch torchaudio transformers scikit-learn sentencepiece tqdm librosa soundfile
+pip install modal torch torchaudio transformers scikit-learn sentencepiece tqdm librosa soundfile pydub
 
 # Authenticate with Modal
 python3 -m modal token set --token-id <your-id> --token-secret <your-secret>
 ```
 
-### Modal Volume
+### Modal Volume Structure
 
 All data is stored in a Modal volume named `bible-audio-data`:
 
 ```
 /mnt/audio_data/
-├── raw_audio/           # Original MP3 files
-├── converted_audio/     # WAV files (16kHz mono)
-├── segmented_audio/     # Silence-segmented files
-├── portuguese_units/    # Phase 1 outputs
-├── phase2_output/       # Phase 2 outputs
-├── vocoder_checkpoints/ # Phase 3 outputs
-└── vocoder_test_output/ # Test results
+├── raw_audio/                    # Original MP3 files
+├── converted_audio/              # WAV files (16kHz mono)
+├── segmented_audio/              # Portuguese segments
+├── segmented_audio_satere/       # Sateré segments
+├── portuguese_units/             # Phase 1 outputs (Portuguese)
+├── satere_units/                 # Phase 1 outputs (Sateré)
+├── phase2_output/                # Phase 2 outputs (Portuguese)
+├── phase2_satere_output/         # Phase 2 outputs (Sateré)
+├── vocoder_checkpoints/          # V1 vocoder (Portuguese)
+├── vocoder_v2_checkpoints/       # V2 vocoder (Portuguese)
+├── vocoder_v2_satere_checkpoints/# V2 vocoder (Sateré)
+├── vocoder_test_output/          # V1 test results
+└── vocoder_v2_test_output/       # V2 test results
 ```
 
 ---
@@ -35,32 +53,47 @@ All data is stored in a Modal volume named `bible-audio-data`:
 
 ### Step 0.1: Segment Audio Locally
 
-Segmentation by silence is CPU-intensive and runs better locally.
+Audio segmentation is CPU-intensive and runs better on your local machine.
 
 ```bash
-python3 scripts/segment_audio.py
+# Portuguese (default)
+python3 scripts/segment_audio.py --language portuguese
+
+# Sateré-Mawé
+python3 scripts/segment_audio.py --language satere
 ```
 
-```mermaid
-flowchart LR
-    A[MP3 Files<br/>~84 hours] --> B[Convert to WAV<br/>16kHz mono]
-    B --> C[Detect Silence<br/>-40dB threshold]
-    C --> D[Split at Pauses<br/>min 0.5s silence]
-    D --> E[18,072 Segments<br/>~17s average]
-```
+**Processing Steps**:
 
-**Output:** `local_segments/` directory with WAV files
+| Step | Description | Output |
+|------|-------------|--------|
+| 1 | Load MP3 files | Raw audio |
+| 2 | Convert to WAV (16kHz mono) | Normalized audio |
+| 3 | Detect silence (-40dB threshold) | Silence regions |
+| 4 | Split at pauses (min 0.5s silence) | Segments |
+| 5 | Filter by length (2-30 seconds) | Valid segments |
+
+**Typical Output**:
+- Portuguese: ~18,000 segments, average ~17 seconds
+- Sateré: Varies based on source material
+
+**Output Directory**: `local_segments_<language>/`
 
 ### Step 0.2: Upload to Modal
 
 ```bash
-python3 -m modal run scripts/upload_to_modal.py
+# Portuguese
+python3 -m modal run scripts/upload_to_modal.py --language portuguese
+
+# Sateré
+python3 -m modal run scripts/upload_to_modal.py --language satere
 ```
 
-**Features:**
+**Features**:
 - Resume capability (skips already uploaded files)
 - Progress bar with ETA
 - Batch processing (100 files at a time)
+- Automatic directory creation
 
 ---
 
@@ -68,52 +101,31 @@ python3 -m modal run scripts/upload_to_modal.py
 
 ### What It Does
 
-1. Loads each audio segment
-2. Extracts XLSR-53 features (layer 14)
-3. Clusters features using K-Means (100 clusters)
-4. Saves unit sequences with timestamps
+| Step | Process | Output |
+|------|---------|--------|
+| 1 | Load XLSR-53 model | Feature extractor |
+| 2 | Extract Layer 14 features | 1024-dim vectors per 20ms |
+| 3 | Fit K-Means (k=100) | Cluster centroids |
+| 4 | Predict cluster IDs | Unit sequences |
+| 5 | Save with timestamps | Aligned corpus |
 
 ### Run Command
 
 ```bash
-# Skip segmentation (use uploaded segments)
+# Portuguese (default)
 python3 -m modal run --detach src/training/phase1_acoustic.py::main_skip_segmentation
+
+# Sateré
+python3 -m modal run --detach src/training/phase1_acoustic.py::main_skip_segmentation --language satere
 ```
 
-### Execution Flow
+### Output Files
 
-```mermaid
-flowchart TB
-    subgraph Initialize
-        A[Load XLSR-53 Model]
-        B[Initialize K-Means<br/>k=100]
-    end
-    
-    subgraph Process Each File
-        C[Load WAV Segment]
-        D[Extract Features<br/>Layer 14]
-        E[Fit K-Means<br/>Partial fit]
-        F[Store Features<br/>in buffer]
-    end
-    
-    subgraph Finalize
-        G[Finalize K-Means]
-        H[Predict Cluster IDs<br/>for all features]
-        I[Save Outputs]
-    end
-    
-    A --> B --> C --> D --> E --> F
-    F -->|"Next file"| C
-    F -->|"All files done"| G --> H --> I
-```
-
-### Outputs
-
-| File | Description |
-|------|-------------|
-| `portuguese_kmeans.pkl` | Trained K-Means model |
-| `portuguese_corpus_timestamped.json` | Unit sequences per file |
-| `all_units_for_bpe.txt` | All units as space-separated strings |
+| File | Description | Size |
+|------|-------------|------|
+| `<lang>_kmeans.pkl` | Trained K-Means model | ~400 KB |
+| `<lang>_corpus_timestamped.json` | Unit sequences with timestamps | ~50 MB |
+| `all_units_for_bpe.txt` | All units as text (for Phase 2) | ~20 MB |
 
 ### Checkpointing
 
@@ -121,7 +133,16 @@ The script saves checkpoints every 5 minutes:
 - `checkpoint.json` - Current state
 - `processed_files.txt` - Completed files
 
-Resume automatically if interrupted.
+**Auto-resume**: If interrupted, restart with the same command.
+
+### Resource Usage
+
+| Resource | Specification |
+|----------|---------------|
+| GPU | A10G (24GB) |
+| Memory | ~16 GB |
+| Time | 2-4 hours (depends on data size) |
+| Storage | ~100 MB outputs |
 
 ---
 
@@ -129,41 +150,40 @@ Resume automatically if interrupted.
 
 ### What It Does
 
-1. Loads unit sequences from Phase 1
-2. Trains SentencePiece BPE tokenizer
-3. Analyzes motif frequencies
-4. Saves vocabulary and analysis
+| Step | Process | Output |
+|------|---------|--------|
+| 1 | Load unit sequences | Text corpus |
+| 2 | Train SentencePiece BPE | Merge rules |
+| 3 | Build vocabulary | Token → motif mapping |
+| 4 | Analyze frequencies | Motif statistics |
 
 ### Run Command
 
 ```bash
+# Portuguese (default)
 python3 -m modal run --detach src/training/phase2_bpe.py::main
+
+# Sateré
+python3 -m modal run --detach src/training/phase2_bpe.py::main --language satere
+
+# Custom vocabulary size
+python3 -m modal run --detach src/training/phase2_bpe.py::main --vocab-size 300 --min-frequency 10
 ```
 
-### Execution Flow
-
-```mermaid
-flowchart LR
-    A[Load Units<br/>all_units_for_bpe.txt] --> B[Train SentencePiece<br/>BPE model]
-    B --> C[Extract Vocabulary]
-    C --> D[Analyze Frequencies]
-    D --> E[Save Outputs]
-```
-
-### Outputs
+### Output Files
 
 | File | Description |
 |------|-------------|
-| `portuguese_bpe.model` | Trained BPE model |
-| `portuguese_bpe.vocab` | Vocabulary (unit → token) |
+| `<lang>_bpe.model` | Trained SentencePiece model |
+| `<lang>_bpe.vocab` | Vocabulary (unit sequences → tokens) |
 | `motif_analysis.json` | Top motifs with frequencies |
 
 ### Vocabulary Size Auto-Adjustment
 
-If requested vocab_size exceeds data capacity:
+If the requested vocabulary size is too large for the data:
 
 ```python
-# Automatic retry with lower vocab size
+# Automatic fallback
 try:
     train(vocab_size=500)
 except RuntimeError as e:
@@ -172,84 +192,110 @@ except RuntimeError as e:
         train(vocab_size=max_size - 10)
 ```
 
+### Resource Usage
+
+| Resource | Specification |
+|----------|---------------|
+| GPU | Not required (CPU only) |
+| Memory | ~8 GB |
+| Time | 15-30 minutes |
+| Storage | ~10 MB outputs |
+
 ---
 
 ## Phase 3: Vocoder Training
 
-### What It Does
+### V1 vs V2 Comparison
 
-1. Loads unit sequences and corresponding audio
-2. Trains Generator (unit → audio) and Discriminator
-3. Uses mel spectrogram loss + adversarial loss
-4. Saves checkpoints and sample audio
+| Aspect | V1 | V2 |
+|--------|----|----|
+| Architecture | Simple TransConv | HiFi-GAN + MRF |
+| Pitch | Not supported | 32-bin conditioning |
+| Quality | Robotic | Natural prosody |
+| Training Time | 2-4 hours | 4-8 hours |
+| Recommended | No | Yes |
 
-### Run Command
+### V2 Training (Recommended)
 
 ```bash
-# Full training with defaults
+# Portuguese (default)
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main
+
+# Sateré
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --language satere
+
+# Custom parameters
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main \
+    --language satere \
+    --epochs 1000 \
+    --batch-size 12 \
+    --segment-length 32000 \
+    --patience 100
+
+# Resume from checkpoint
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --resume v2_latest.pt
+```
+
+### V1 Training (Legacy)
+
+```bash
+# Portuguese only (V1 doesn't support --language)
 python3 -m modal run --detach src/training/phase3_vocoder.py::main
 
 # Custom parameters
 python3 -m modal run --detach src/training/phase3_vocoder.py::main \
     --epochs 500 \
-    --batch-size 16 \
-    --patience 50
+    --batch-size 16
 ```
 
-### Training Strategy
+### Training Parameters
 
-```mermaid
-flowchart TB
-    subgraph Epoch["Each Epoch (10,000 samples)"]
-        A[Sample Random Segments] --> B[Extract 1-sec Audio + Units]
-        B --> C[Generate Fake Audio]
-        C --> D[Train Discriminator<br/>Real vs Fake]
-        D --> E[Train Generator<br/>Mel Loss + Adversarial]
-    end
-    
-    subgraph Monitoring
-        F[Check Mel Loss]
-        G{Improved?}
-        H[Reset Patience]
-        I[Increment Patience]
-        J{Patience > 50?}
-        K[Early Stop]
-    end
-    
-    E --> F --> G
-    G -->|Yes| H --> E
-    G -->|No| I --> J
-    J -->|No| E
-    J -->|Yes| K
-```
+| Parameter | V1 Default | V2 Default | Description |
+|-----------|------------|------------|-------------|
+| `epochs` | 500 | 1000 | Maximum training epochs |
+| `batch_size` | 16 | 12 | Samples per batch |
+| `lr` / `lr_g` / `lr_d` | 0.0002 | 0.0002 | Learning rates |
+| `segment_length` | 16000 | 32000 | Audio samples per segment |
+| `patience` | 50 | 100 | Early stopping patience |
+| `save_every` | 20 | 25 | Checkpoint frequency |
 
-### Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `epochs` | 500 | Maximum training epochs |
-| `batch_size` | 16 | Samples per batch |
-| `lr` | 0.0002 | Learning rate |
-| `samples_per_epoch` | 10,000 | Samples per epoch (~2 min) |
-| `patience` | 50 | Early stopping patience |
-| `min_delta` | 0.5 | Minimum improvement threshold |
-| `save_every` | 20 | Checkpoint frequency |
-
-### Outputs
+### Output Files
 
 | File | Description |
 |------|-------------|
-| `vocoder_final.pt` | Final model weights |
-| `vocoder_latest.pt` | Latest checkpoint |
-| `vocoder_epoch_XXXX.pt` | Periodic checkpoints |
-| `sample_epoch_XXXX.wav` | Generated samples |
-| `training_log.json` | Loss history |
+| `v2_best.pt` | Best model (lowest mel loss) |
+| `v2_latest.pt` | Latest checkpoint |
+| `v2_epoch_XXXX.pt` | Periodic checkpoints |
+| `sample_v2_XXXX.wav` | Generated samples |
+| `training_log_v2.json` | Loss history |
+
+### Resource Usage
+
+| Resource | V1 | V2 |
+|----------|----|----|
+| GPU | A10G (24GB) | A10G (24GB) |
+| GPU Memory | ~12 GB | ~20 GB |
+| Time | 2-4 hours | 4-8 hours |
+| Storage | ~500 MB | ~800 MB |
 
 ---
 
 ## Testing & Validation
 
-### Vocoder Quality Test
+### V2 Vocoder Test
+
+```bash
+# Portuguese
+python3 -m modal run src/training/vocoder_test_v2.py::main --num-samples 50
+
+# Sateré
+python3 -m modal run src/training/vocoder_test_v2.py::main --language satere --num-samples 50
+
+# Specific checkpoint
+python3 -m modal run src/training/vocoder_test_v2.py::main --checkpoint v2_epoch_0500.pt
+```
+
+### V1 Vocoder Test
 
 ```bash
 python3 -m modal run src/training/vocoder_test.py::main --num-samples 20
@@ -261,91 +307,171 @@ python3 -m modal run src/training/vocoder_test.py::main --num-samples 20
 |--------|-------------|------------|
 | **SNR** | Signal-to-noise ratio | > 5 dB |
 | **MCD** | Mel Cepstral Distortion | < 8 |
-| **Length Match** | Synth / Original ratio | ~1.0 |
+| **F0 RMSE** | Pitch accuracy (V2 only) | < 20 Hz |
+| **Length Match** | Synth/Original ratio | 0.95 - 1.05 |
 
 ### Download Results
 
 ```bash
-# Download test audio for listening
-python3 -m modal volume get bible-audio-data vocoder_test_output/ ./results/
+# V2 test audio
+modal volume get bible-audio-data vocoder_v2_test_output/ ./results/
 
-# Compare files
-# results/orig_0000.wav  - Original audio
-# results/synth_0000.wav - Synthesized audio
+# V1 test audio
+modal volume get bible-audio-data vocoder_test_output/ ./results/
+
+# Sateré V2 test audio
+modal volume get bible-audio-data vocoder_v2_satere_test_output/ ./results/
 ```
+
+**Output Files**:
+- `v2_orig_XXXX.wav` - Original audio
+- `v2_synth_XXXX.wav` - Synthesized audio
+- `test_results_v2.json` - Metrics summary
 
 ---
 
-## Monitoring
+## Monitoring & Troubleshooting
 
 ### Modal Dashboard
 
-All jobs can be monitored at:
-```
-https://modal.com/apps/obt-lab/main/
-```
+Monitor all jobs at: `https://modal.com/apps/<org>/main/`
 
 ### Check Volume Contents
 
 ```bash
-# List directories
-python3 -m modal volume ls bible-audio-data
+# List all directories
+modal volume ls bible-audio-data
 
 # List specific directory
-python3 -m modal volume ls bible-audio-data vocoder_checkpoints/
+modal volume ls bible-audio-data vocoder_v2_checkpoints/
+
+# Check file sizes
+modal volume ls bible-audio-data portuguese_units/
 ```
 
 ### Download Outputs
 
 ```bash
 # Phase 1 outputs
-python3 -m modal volume get bible-audio-data portuguese_units/ ./modal_downloads/phase1_outputs/
+modal volume get bible-audio-data portuguese_units/ ./downloads/phase1/
 
 # Phase 2 outputs
-python3 -m modal volume get bible-audio-data phase2_output/ ./modal_downloads/phase2_outputs/
+modal volume get bible-audio-data phase2_output/ ./downloads/phase2/
 
-# Vocoder checkpoints
-python3 -m modal volume get bible-audio-data vocoder_checkpoints/ ./modal_downloads/vocoder/
+# V2 Vocoder checkpoints
+modal volume get bible-audio-data vocoder_v2_checkpoints/ ./downloads/vocoder_v2/
+
+# Training logs
+modal volume get bible-audio-data vocoder_v2_checkpoints/training_log_v2.json ./
 ```
+
+### Common Issues & Solutions
+
+#### CUDA Out of Memory
+
+**Symptom**: Training crashes with OOM error
+
+**Solutions**:
+```bash
+# Reduce batch size
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --batch-size 8
+
+# Reduce segment length
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --segment-length 16000
+```
+
+#### Discriminator Collapse (D Loss = 0)
+
+**Symptom**: D loss drops to 0, generated audio becomes noise
+
+**Solutions**:
+1. Add gradient penalty (modify code)
+2. Reduce generator learning rate
+3. Train D more steps per G step
+
+#### Early Stopping Too Soon
+
+**Symptom**: Training stops before quality improves
+
+**Solution**:
+```bash
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --patience 150
+```
+
+#### Job Timeout
+
+**Symptom**: Modal job terminates unexpectedly
+
+**Solution**: Increase timeout in script (default is 12 hours for vocoder)
+```python
+@app.function(timeout=43200)  # 12 hours
+```
+
+#### Phase 1 Stalls
+
+**Symptom**: Progress stops during feature extraction
+
+**Cause**: Usually memory pressure from XLSR-53
+
+**Solution**: Reduce batch processing, restart (will resume from checkpoint)
 
 ---
 
-## Troubleshooting
+## Full Pipeline Commands
 
-### CUDA Out of Memory
+### Portuguese (Complete)
 
-**Symptom:** Training crashes with OOM error
-
-**Solution:** Reduce batch size
 ```bash
-python3 -m modal run --detach src/training/phase3_vocoder.py::main --batch-size 8
+# Step 1: Segment locally
+python3 scripts/segment_audio.py --language portuguese
+
+# Step 2: Upload to Modal
+python3 -m modal run scripts/upload_to_modal.py --language portuguese
+
+# Step 3: Run Phase 1
+python3 -m modal run --detach src/training/phase1_acoustic.py::main_skip_segmentation --language portuguese
+
+# Step 4: Run Phase 2
+python3 -m modal run --detach src/training/phase2_bpe.py::main --language portuguese
+
+# Step 5: Run Phase 3 V2
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --language portuguese
+
+# Step 6: Test
+python3 -m modal run src/training/vocoder_test_v2.py::main --language portuguese
 ```
 
-### Discriminator Collapse (D Loss = 0)
+### Sateré (Complete)
 
-**Symptom:** D loss drops to 0, audio quality degrades
-
-**Cause:** Generator "wins" too easily
-
-**Solutions:**
-1. Lower generator learning rate
-2. Train D more steps per G step
-3. Add gradient penalty
-
-### Early Stopping Too Soon
-
-**Symptom:** Training stops before good quality
-
-**Solution:** Increase patience or decrease min_delta
 ```bash
-python3 -m modal run --detach src/training/phase3_vocoder.py::main --patience 100 --min-delta 0.1
+# Step 1: Segment locally
+python3 scripts/segment_audio.py --language satere
+
+# Step 2: Upload to Modal
+python3 -m modal run scripts/upload_to_modal.py --language satere
+
+# Step 3: Run Phase 1
+python3 -m modal run --detach src/training/phase1_acoustic.py::main_skip_segmentation --language satere
+
+# Step 4: Run Phase 2
+python3 -m modal run --detach src/training/phase2_bpe.py::main --language satere
+
+# Step 5: Run Phase 3 V2
+python3 -m modal run --detach src/training/phase3_vocoder_v2.py::main --language satere
+
+# Step 6: Test
+python3 -m modal run src/training/vocoder_test_v2.py::main --language satere
 ```
 
-### Job Timeout
+### All-in-One (Using run_full_pipeline.py)
 
-**Symptom:** Modal job terminates after 4 hours
+```bash
+# Portuguese with V2 vocoder
+python3 -m modal run src/training/run_full_pipeline.py::main --language portuguese
 
-**Solution:** Use `--detach` and increase timeout in code
-```python
-@app.function(timeout=43200)  # 12 hours
+# Sateré with V2 vocoder
+python3 -m modal run src/training/run_full_pipeline.py::main --language satere
+
+# Skip already completed phases
+python3 -m modal run src/training/run_full_pipeline.py::main --language satere --phases 3
 ```
