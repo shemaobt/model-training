@@ -589,9 +589,11 @@ def train_vocoder_v2(
     
     print(f"Dataset: {len(dataset.samples)} audio files, {samples_per_epoch} samples/epoch")
     
+    # Note: num_workers=0 to avoid pickling issues with dynamically defined dataset
+    # Python 3.14+ uses 'forkserver' which requires picklable objects
     dataloader = DataLoader(
         dataset, batch_size=batch_size, shuffle=True, 
-        num_workers=2, drop_last=True, pin_memory=True
+        num_workers=0, drop_last=True, pin_memory=True
     )
     
     # Optimizers with separate learning rates
