@@ -34,6 +34,8 @@ ENV/
 
 # Large data files (stored on Modal volume)
 local_segments/
+local_segments_*/
+audio_data/
 
 # modal_downloads - keep small analysis files, ignore large ones
 modal_downloads/phase1_outputs/
