@@ -4,16 +4,22 @@
 #     text_representation:
 #       extension: .py
 #       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.20.0
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
 # ---
 
 # %% [markdown]
 # # Generator Model
-# 
+#
 # Unit-to-Waveform Generator (Vocoder) that converts discrete acoustic units 
 # to continuous audio waveforms.
-# 
+#
 # ## Architecture
-# 
+#
 # ```
 # Input: Unit sequence [B, T] (e.g., T=50 units)
 #    ↓
@@ -35,7 +41,7 @@
 #    ↓
 # Output: Audio [B, T*320] (e.g., 16,000 samples)
 # ```
-# 
+#
 # Total upsampling: 5 × 4 × 4 × 4 = 320x
 # This matches the XLSR-53 frame rate (~20ms per unit at 16kHz)
 
@@ -149,14 +155,14 @@ class Generator(nn.Module):
 
 # %% [markdown]
 # ## Usage Example
-# 
+#
 # ```python
 # # Create generator
 # generator = Generator(num_units=100)
-# 
+#
 # # Input: batch of unit sequences
 # units = torch.randint(0, 100, (4, 50))  # 4 sequences of 50 units
-# 
+#
 # # Generate audio
 # audio = generator(units)  # Shape: [4, 16000] (1 second at 16kHz)
 # ```

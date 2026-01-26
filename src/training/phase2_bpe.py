@@ -1,24 +1,62 @@
-"""
-Modal deployment for Phase 2 notebook - BPE Tokenizer Training
-Trains SentencePiece BPE tokenizer on acoustic units from Phase 1
-to discover acoustic motifs/patterns
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.20.0
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
 
-Run with: /usr/local/bin/python3 -m modal run modal_phase2.py
-"""
+# %% [markdown]
+# # Phase 2: BPE Motif Discovery
+#
+# This script trains a BPE (Byte Pair Encoding) tokenizer on acoustic units
+# to discover recurring acoustic patterns (motifs).
+#
+# ## What BPE Discovers
+#
+# BPE iteratively merges the most frequent pairs of tokens:
+#
+# ```
+# Initial:   31 31 87 43 43 17
+#            ↓ merge (31, 31) → 100
+# Step 1:    100 87 43 43 17
+#            ↓ merge (43, 43) → 101
+# Step 2:    100 87 101 17
+# ```
+#
+# Discovered patterns may correspond to:
+# - Sustained sounds (e.g., vowels)
+# - Consonant clusters
+# - Syllable fragments
+#
+# ## Run on Modal
+#
+# ```bash
+# python3 -m modal run --detach src/training/phase2_bpe.py::main
+# ```
 
+# %% [markdown]
+# ## Modal Configuration
+
+# %%
 import modal
 import os
 
-# Create Modal app
+# %%
 app = modal.App("bible-audio-training")
 
-# Create persistent volume (same as Phase 1)
 audio_volume = modal.Volume.from_name(
     "bible-audio-data",
     create_if_missing=True
 )
 
-# Create image with dependencies
+# %%
 image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -28,78 +66,70 @@ image = (
     )
 )
 
-# Mount points (using Phase 1 outputs)
+# %%
 AUDIO_MOUNT = "/mnt/audio_data"
 OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
-PHASE2_OUTPUT_DIR = f"{AUDIO_MOUNT}/phase2_output"  # Phase 2 specific outputs
+PHASE2_OUTPUT_DIR = f"{AUDIO_MOUNT}/phase2_output"
 
+# %% [markdown]
+# ## BPE Tokenizer Training
+#
+# Train SentencePiece BPE model on acoustic unit sequences.
+# Automatically adjusts vocabulary size if requested size is too large.
 
+# %%
 @app.function(
     image=image,
     volumes={AUDIO_MOUNT: audio_volume},
-    timeout=3600,  # 1 hour timeout
-    # No GPU needed - BPE training is CPU-based
+    timeout=3600,
 )
 def train_bpe_tokenizer(vocab_size: int = 500, min_frequency: int = 5):
-    """Phase 2: Train BPE tokenizer on acoustic units from Phase 1
+    """Train BPE tokenizer on acoustic units.
     
     Args:
         vocab_size: Number of BPE tokens/motifs to discover
-        min_frequency: Minimum frequency for a pattern to be included
+        min_frequency: Minimum frequency for a pattern
     """
     import sentencepiece as spm
     from tqdm import tqdm
     
     os.makedirs(PHASE2_OUTPUT_DIR, exist_ok=True)
     
-    # Check if Phase 1 output exists
     units_file = os.path.join(OUTPUT_DIR, "all_units_for_bpe.txt")
     
     if not os.path.exists(units_file):
-        print(f"❌ Error: Phase 1 output not found: {units_file}")
-        print("   Please run Phase 1 first to generate acoustic units!")
+        print(f"❌ Phase 1 output not found: {units_file}")
         return None
     
     print(f"✓ Found Phase 1 output: {units_file}")
     
-    # Read unit sequences from Phase 1
-    print("\n📖 Reading acoustic units from Phase 1...")
+    # Read unit sequences
+    print("\n📖 Reading acoustic units...")
     unit_sequences = []
     
     with open(units_file, 'r') as f:
-        for line in tqdm(f, desc="Reading unit sequences"):
+        for line in tqdm(f, desc="Reading"):
             line = line.strip()
             if line:
                 unit_sequences.append(line)
     
-    print(f"✓ Loaded {len(unit_sequences)} unit sequences")
+    print(f"✓ Loaded {len(unit_sequences)} sequences")
     
-    # Prepare training data for SentencePiece
-    # Each line should be a "sentence" of units
+    # Prepare training data
     train_path = os.path.join(PHASE2_OUTPUT_DIR, "bpe_train.txt")
     
-    print(f"\n📝 Preparing BPE training data...")
     with open(train_path, 'w') as f:
-        for seq in tqdm(unit_sequences, desc="Writing training data"):
+        for seq in tqdm(unit_sequences, desc="Writing"):
             f.write(seq + "\n")
     
-    print(f"✓ Training data written to: {train_path}")
-    
-    # Train BPE model
+    # Train BPE with auto-adjustment
     model_prefix = os.path.join(PHASE2_OUTPUT_DIR, "portuguese_bpe")
-    
-    print(f"\n🔤 Training BPE tokenizer...")
-    print(f"   Requested vocabulary size: {vocab_size}")
-    print(f"   Min frequency: {min_frequency}")
-    print(f"   Training on {len(unit_sequences)} sequences")
-    
-    # Try training with requested vocab_size, but auto-adjust if too high
     current_vocab_size = vocab_size
     max_attempts = 3
     
     for attempt in range(max_attempts):
         try:
-            print(f"\n   Attempt {attempt + 1}: Training with vocab_size={current_vocab_size}...")
+            print(f"\n🔤 Training BPE (vocab_size={current_vocab_size})...")
             
             spm.SentencePieceTrainer.train(
                 input=train_path,
@@ -109,9 +139,8 @@ def train_bpe_tokenizer(vocab_size: int = 500, min_frequency: int = 5):
                 character_coverage=1.0,
                 max_sentence_length=10000,
                 num_threads=4,
-                input_sentence_size=len(unit_sequences),  # Use all sequences
+                input_sentence_size=len(unit_sequences),
                 shuffle_input_sentence=True,
-                # BPE-specific parameters
                 byte_fallback=True,
                 split_by_unicode_script=True,
                 split_by_whitespace=True,
@@ -120,17 +149,16 @@ def train_bpe_tokenizer(vocab_size: int = 500, min_frequency: int = 5):
                 normalization_rule_name='nmt_nfkc_cf',
             )
             
-            # Load and verify the model
+            # Verify model
             sp = spm.SentencePieceProcessor()
             sp.load(f"{model_prefix}.model")
             
             vocab_size_actual = sp.get_piece_size()
             
             print(f"\n✓ BPE training complete!")
-            print(f"   Model saved to: {model_prefix}.model")
-            print(f"   Vocabulary size: {vocab_size_actual}")
+            print(f"   Model: {model_prefix}.model")
+            print(f"   Vocabulary: {vocab_size_actual}")
             
-            # Commit volume changes
             audio_volume.commit()
             
             return {
@@ -142,74 +170,59 @@ def train_bpe_tokenizer(vocab_size: int = 500, min_frequency: int = 5):
             
         except RuntimeError as e:
             error_msg = str(e)
-            # Check if it's a vocab size error
             if "Vocabulary size too high" in error_msg or "vocab_size" in error_msg.lower():
-                # Try to extract the max allowed size from error message
                 import re
                 match = re.search(r'<= (\d+)', error_msg)
                 if match:
                     max_allowed = int(match.group(1))
-                    print(f"⚠️  Vocabulary size {current_vocab_size} too high. Max allowed: {max_allowed}")
-                    current_vocab_size = max_allowed - 10  # Use slightly less to be safe
-                    if attempt < max_attempts - 1:
-                        print(f"   Retrying with vocab_size={current_vocab_size}...")
-                        continue
+                    print(f"⚠️  Vocab size too high. Max: {max_allowed}")
+                    current_vocab_size = max_allowed - 10
                 else:
-                    # Fallback: reduce by 20% each attempt
                     current_vocab_size = int(current_vocab_size * 0.8)
-                    if attempt < max_attempts - 1:
-                        print(f"   Retrying with reduced vocab_size={current_vocab_size}...")
-                        continue
-            # If it's not a vocab size error or we've exhausted attempts, raise
-            print(f"❌ Error training BPE: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-        except Exception as e:
-            print(f"❌ Unexpected error training BPE: {e}")
+                
+                if attempt < max_attempts - 1:
+                    print(f"   Retrying with {current_vocab_size}...")
+                    continue
+            
+            print(f"❌ Error: {e}")
             import traceback
             traceback.print_exc()
             return None
     
-    print(f"❌ Failed to train BPE after {max_attempts} attempts")
     return None
 
+# %% [markdown]
+# ## Motif Analysis
+#
+# Analyze the discovered motifs: frequencies, patterns, and statistics.
 
+# %%
 @app.function(
     image=image,
     volumes={AUDIO_MOUNT: audio_volume},
-    timeout=1800,  # 30 minutes
+    timeout=1800,
 )
 def analyze_motifs():
-    """Analyze discovered motifs from BPE tokenizer"""
+    """Analyze discovered motifs from BPE tokenizer."""
     import sentencepiece as spm
     from collections import Counter
     import json
     
-    # Load BPE model
     model_path = os.path.join(PHASE2_OUTPUT_DIR, "portuguese_bpe.model")
     
     if not os.path.exists(model_path):
-        print(f"❌ BPE model not found: {model_path}")
-        print("   Please run train_bpe_tokenizer() first!")
+        print(f"❌ BPE model not found. Run training first.")
         return None
     
     print("📊 Loading BPE model...")
     sp = spm.SentencePieceProcessor()
     sp.load(model_path)
+    print(f"✓ Model loaded (vocab: {sp.get_piece_size()})")
     
-    print(f"✓ Model loaded (vocab size: {sp.get_piece_size()})")
-    
-    # Load unit sequences
+    # Load and encode sequences
     units_file = os.path.join(OUTPUT_DIR, "all_units_for_bpe.txt")
     
-    if not os.path.exists(units_file):
-        print(f"❌ Units file not found: {units_file}")
-        return None
-    
     print("\n🔍 Analyzing motifs...")
-    
-    # Read and encode all sequences
     all_encoded = []
     total_tokens = 0
     
@@ -221,18 +234,16 @@ def analyze_motifs():
                 all_encoded.extend(encoded)
                 total_tokens += len(encoded)
     
-    # Count motif frequencies
+    # Count frequencies
     motif_counts = Counter(all_encoded)
     
-    # Analyze motifs
-    print(f"\n📊 Motif Analysis Results:")
+    print(f"\n📊 Results:")
     print(f"   Total tokens: {total_tokens:,}")
     print(f"   Unique motifs: {len(motif_counts)}")
     
-    # Get top motifs
+    # Save analysis
     top_motifs = motif_counts.most_common(50)
     
-    # Save analysis
     analysis_path = os.path.join(PHASE2_OUTPUT_DIR, "motif_analysis.json")
     with open(analysis_path, 'w') as f:
         json.dump({
@@ -242,19 +253,17 @@ def analyze_motifs():
             "all_motifs": [{"motif": m, "count": c} for m, c in motif_counts.most_common()]
         }, f, indent=2)
     
-    print(f"\n✓ Analysis saved to: {analysis_path}")
+    print(f"\n✓ Saved: {analysis_path}")
     
     # Print top motifs
-    print(f"\n🏆 Top 30 Motifs by Frequency:")
+    print(f"\n🏆 Top 30 Motifs:")
     print("-" * 60)
     for i, (motif, count) in enumerate(top_motifs[:30], 1):
-        # Count units in motif
         units_in_motif = motif.replace("▁", "").strip().split()
         n_units = len([u for u in units_in_motif if u])
         percentage = (count / total_tokens) * 100
-        print(f"  {i:2d}. {motif:30s} count={count:6,} ({percentage:5.2f}%)  units={n_units}")
+        print(f"  {i:2d}. {motif:30s} {count:6,} ({percentage:5.2f}%)  units={n_units}")
     
-    # Commit volume changes
     audio_volume.commit()
     
     return {
@@ -263,10 +272,13 @@ def analyze_motifs():
         "top_motifs_count": len(top_motifs)
     }
 
+# %% [markdown]
+# ## Entry Point
 
+# %%
 @app.local_entrypoint()
 def main(vocab_size: int = 500, min_frequency: int = 5):
-    """Run Phase 2: BPE Tokenizer Training"""
+    """Run Phase 2: BPE Tokenizer Training."""
     print("🚀 Starting Phase 2: BPE Tokenizer Training")
     print("=" * 60)
     
@@ -274,19 +286,19 @@ def main(vocab_size: int = 500, min_frequency: int = 5):
     result = train_bpe_tokenizer.remote(vocab_size, min_frequency)
     
     if result:
-        print(f"✓ BPE model trained successfully!")
+        print(f"✓ BPE model trained!")
         print(f"   Model: {result['model_path']}")
         print(f"   Vocabulary: {result['vocab_size']} tokens")
         
-        print("\n📊 Step 2: Analyzing discovered motifs...")
+        print("\n📊 Step 2: Analyzing motifs...")
         analysis = analyze_motifs.remote()
         
         if analysis:
             print(f"✓ Analysis complete!")
-            print(f"   Total tokens analyzed: {analysis['total_tokens']:,}")
+            print(f"   Total tokens: {analysis['total_tokens']:,}")
             print(f"   Unique motifs: {analysis['unique_motifs']}")
         
         print("\n✅ Phase 2 complete!")
-        print(f"Results stored in: {PHASE2_OUTPUT_DIR}")
+        print(f"Results in: {PHASE2_OUTPUT_DIR}")
     else:
-        print("\n❌ Phase 2 failed. Check logs above for details.")
+        print("\n❌ Phase 2 failed.")

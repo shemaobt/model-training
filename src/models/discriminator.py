@@ -4,16 +4,22 @@
 #     text_representation:
 #       extension: .py
 #       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.20.0
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
 # ---
 
 # %% [markdown]
 # # Discriminator Model
-# 
+#
 # Multi-scale discriminator for GAN-based vocoder training.
 # Operates at multiple audio resolutions for better quality assessment.
-# 
+#
 # ## Architecture
-# 
+#
 # ```
 # Input: Audio waveform [B, T]
 #    ↓
@@ -25,10 +31,10 @@
 #    │
 # Scale 3: 4x downsampled (AvgPool)
 #    └─ Conv layers → Score 3
-# 
+#
 # Output: List of scores [Score1, Score2, Score3]
 # ```
-# 
+#
 # Multi-scale discrimination helps capture:
 # - Fine details (high frequency) at original scale
 # - Global structure (low frequency) at downsampled scales
@@ -117,7 +123,7 @@ class MultiScaleDiscriminator(nn.Module):
 
 # %% [markdown]
 # ## Multi-Period Discriminator (HiFi-GAN Style)
-# 
+#
 # An alternative discriminator design that looks at different periodic patterns.
 # This helps detect artifacts in voiced speech which has strong periodicity.
 
@@ -190,15 +196,15 @@ class MultiPeriodDiscriminator(nn.Module):
 
 # %% [markdown]
 # ## Usage Example
-# 
+#
 # ```python
 # # Create discriminators
 # msd = MultiScaleDiscriminator()
 # mpd = MultiPeriodDiscriminator()
-# 
+#
 # # Input: batch of audio
 # audio = torch.randn(4, 16000)  # 4 samples, 1 second each
-# 
+#
 # # Get scores
 # msd_outputs = msd(audio)  # List of 3 tensors
 # mpd_outputs = mpd(audio)  # List of 5 tensors

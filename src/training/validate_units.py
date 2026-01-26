@@ -1,23 +1,56 @@
-"""
-Modal deployment for Checking1 notebook - Audio Synthesis Validation
-Tests acoustic units by synthesizing audio using a Generator (vocoder) model
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.20.0
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
 
-Run with: /usr/local/bin/python3 -m modal run modal_checking.py::main
-"""
+# %% [markdown]
+# # Acoustic Units Validation
+#
+# Validates the acoustic units from Phase 1 and optionally synthesizes
+# audio using a pre-trained vocoder.
+#
+# ## Features
+#
+# - Load and verify K-Means model
+# - Analyze unit sequence statistics
+# - Optionally synthesize audio from units
+#
+# ## Run on Modal
+#
+# ```bash
+# # Validate units only (no synthesis)
+# python3 -m modal run src/training/validate_units.py::main
+#
+# # Validate and synthesize with vocoder
+# python3 -m modal run src/training/validate_units.py::main \
+#     --generator-checkpoint /mnt/audio_data/vocoder_checkpoints/vocoder_final.pt
+# ```
 
+# %% [markdown]
+# ## Modal Configuration
+
+# %%
 import modal
 import os
 
-# Create Modal app
+# %%
 app = modal.App("bible-audio-training")
 
-# Create persistent volume (same as Phase 1 & 2)
 audio_volume = modal.Volume.from_name(
     "bible-audio-data",
     create_if_missing=True
 )
 
-# Create image with dependencies
+# %%
 image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -32,19 +65,25 @@ image = (
     )
 )
 
-# Mount points
+# %%
 AUDIO_MOUNT = "/mnt/audio_data"
 OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
 CHECKING_OUTPUT_DIR = f"{AUDIO_MOUNT}/checking_output"
 
+# %% [markdown]
+# ## Generator Model (Legacy)
+#
+# This is an older generator architecture (800x upsampling).
+# For the trained vocoder, use `vocoder_test.py` instead.
 
-# Generator model definition (same as notebook)
+# %%
 GENERATOR_CODE = """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class Generator(nn.Module):
+    \"\"\"Legacy generator with 800x upsampling.\"\"\"
     def __init__(self, num_units=100):
         super().__init__()
 
@@ -53,27 +92,27 @@ class Generator(nn.Module):
 
         self.upsamples = nn.ModuleList([
             nn.Sequential(
-                nn.ConvTranspose1d(512, 256, 10, stride=5, padding=2, output_padding=0),
+                nn.ConvTranspose1d(512, 256, 10, stride=5, padding=2),
                 nn.LeakyReLU(0.1),
                 nn.Conv1d(256, 256, 7, padding=3)
             ),
             nn.Sequential(
-                nn.ConvTranspose1d(256, 128, 10, stride=5, padding=2, output_padding=0),
+                nn.ConvTranspose1d(256, 128, 10, stride=5, padding=2),
                 nn.LeakyReLU(0.1),
                 nn.Conv1d(128, 128, 7, padding=3)
             ),
             nn.Sequential(
-                nn.ConvTranspose1d(128, 64, 8, stride=4, padding=2, output_padding=0),
+                nn.ConvTranspose1d(128, 64, 8, stride=4, padding=2),
                 nn.LeakyReLU(0.1),
                 nn.Conv1d(64, 64, 7, padding=3)
             ),
             nn.Sequential(
-                nn.ConvTranspose1d(64, 32, 8, stride=4, padding=2, output_padding=0),
+                nn.ConvTranspose1d(64, 32, 8, stride=4, padding=2),
                 nn.LeakyReLU(0.1),
                 nn.Conv1d(32, 32, 7, padding=3)
             ),
             nn.Sequential(
-                nn.ConvTranspose1d(32, 64, 4, stride=2, padding=1, output_padding=0),
+                nn.ConvTranspose1d(32, 64, 4, stride=2, padding=1),
                 nn.LeakyReLU(0.1),
                 nn.Conv1d(64, 64, 7, padding=3)
             ),
@@ -82,39 +121,35 @@ class Generator(nn.Module):
         self.post_conv = nn.Conv1d(64, 1, 7, padding=3)
 
     def forward(self, x):
-        x = self.unit_embed(x).transpose(1, 2)  # [B, 256, T]
-        x = self.pre_conv(x)  # [B, 512, T]
+        x = self.unit_embed(x).transpose(1, 2)
+        x = self.pre_conv(x)
         x = F.leaky_relu(x, 0.1)
 
         for upsample in self.upsamples:
             x = upsample(x)
             x = F.leaky_relu(x, 0.1)
 
-        x = self.post_conv(x)  # [B, 1, T*800]
+        x = self.post_conv(x)
         x = torch.tanh(x)
         return x.squeeze(1)
 """
 
+# %% [markdown]
+# ## Validation Function
 
+# %%
 @app.function(
     image=image,
     volumes={AUDIO_MOUNT: audio_volume},
-    timeout=1800,  # 30 minutes
-    gpu="A10G",  # GPU needed for Generator inference
+    timeout=1800,
+    gpu="A10G",
 )
 def validate_and_synthesize(
     num_samples: int = 10,
     generator_checkpoint_path: str = None,
     use_random_units: bool = False
 ):
-    """
-    Validate acoustic units and optionally synthesize audio
-    
-    Args:
-        num_samples: Number of unit sequences to test
-        generator_checkpoint_path: Path to Generator checkpoint (if None, will validate units only)
-        use_random_units: If True, generate random unit sequences for testing
-    """
+    """Validate acoustic units and optionally synthesize audio."""
     import torch
     import numpy as np
     import joblib
@@ -128,23 +163,21 @@ def validate_and_synthesize(
     # Load K-Means model
     kmeans_path = os.path.join(OUTPUT_DIR, "portuguese_kmeans.pkl")
     if not os.path.exists(kmeans_path):
-        print(f"❌ K-Means model not found: {kmeans_path}")
-        print("   Please run Phase 1 first!")
+        print(f"❌ K-Means model not found. Run Phase 1 first!")
         return None
     
-    print(f"✓ Loading K-Means model from: {kmeans_path}")
+    print(f"✓ Loading K-Means from: {kmeans_path}")
     kmeans = joblib.load(kmeans_path)
     num_units = kmeans.n_clusters
     print(f"✓ K-Means loaded: {num_units} acoustic units")
     
-    # Load Generator model if checkpoint provided
+    # Load Generator if checkpoint provided
     generator = None
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     if generator_checkpoint_path and os.path.exists(generator_checkpoint_path):
         print(f"\n📦 Loading Generator from: {generator_checkpoint_path}")
         
-        # Write Generator code to temp file and import
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(GENERATOR_CODE)
             gen_module_path = f.name
@@ -155,7 +188,6 @@ def validate_and_synthesize(
         spec.loader.exec_module(gen_module)
         Generator = gen_module.Generator
         
-        # Create and load Generator
         generator = Generator(num_units=num_units).to(device)
         
         try:
@@ -165,24 +197,21 @@ def validate_and_synthesize(
             else:
                 generator.load_state_dict(checkpoint)
             generator.eval()
-            print(f"✓ Generator loaded successfully!")
+            print(f"✓ Generator loaded!")
         except Exception as e:
-            print(f"⚠️  Error loading Generator checkpoint: {e}")
-            print("   Will validate units only (no synthesis)")
+            print(f"⚠️  Error loading Generator: {e}")
             generator = None
     else:
         print(f"\n⚠️  No Generator checkpoint provided")
-        print("   Will validate units only (no audio synthesis)")
+        print("   Will validate units only")
     
     # Load unit sequences
     units_file = os.path.join(OUTPUT_DIR, "all_units_for_bpe.txt")
-    corpus_file = os.path.join(OUTPUT_DIR, "portuguese_corpus_timestamped.json")
     
     if use_random_units:
-        print(f"\n🎲 Generating {num_samples} random unit sequences for testing...")
+        print(f"\n🎲 Generating {num_samples} random sequences...")
         unit_sequences = []
         for _ in range(num_samples):
-            # Generate random sequence of length 50-200 units
             seq_len = np.random.randint(50, 200)
             random_units = np.random.randint(0, num_units, seq_len).tolist()
             unit_sequences.append(random_units)
@@ -191,10 +220,10 @@ def validate_and_synthesize(
             print(f"❌ Units file not found: {units_file}")
             return None
         
-        print(f"\n📖 Reading unit sequences from: {units_file}")
+        print(f"\n📖 Loading unit sequences...")
         unit_sequences = []
         with open(units_file, 'r') as f:
-            for line in tqdm(f, desc="Loading sequences", total=num_samples):
+            for line in tqdm(f, desc="Loading", total=num_samples):
                 line = line.strip()
                 if line:
                     units = [int(u) for u in line.split()]
@@ -202,125 +231,93 @@ def validate_and_synthesize(
                     if len(unit_sequences) >= num_samples:
                         break
         
-        print(f"✓ Loaded {len(unit_sequences)} unit sequences")
+        print(f"✓ Loaded {len(unit_sequences)} sequences")
     
     # Validate units
-    print(f"\n🔍 Validating acoustic units...")
+    print(f"\n🔍 Validating units...")
+    all_units_flat = [u for seq in unit_sequences for u in seq]
+    unique_units = set(all_units_flat)
+    
     validation_results = {
         "total_sequences": len(unit_sequences),
-        "unit_stats": {},
+        "unit_stats": {
+            "total_units": len(all_units_flat),
+            "unique_units": len(unique_units),
+            "expected_unique": num_units,
+            "unit_range": (min(all_units_flat), max(all_units_flat)),
+            "avg_sequence_length": np.mean([len(s) for s in unit_sequences]),
+        },
         "synthesis_results": []
     }
     
-    all_units_flat = []
-    for seq in unit_sequences:
-        all_units_flat.extend(seq)
-    
-    unique_units = set(all_units_flat)
-    validation_results["unit_stats"] = {
-        "total_units": len(all_units_flat),
-        "unique_units": len(unique_units),
-        "expected_unique": num_units,
-        "unit_range": (min(all_units_flat), max(all_units_flat)),
-        "avg_sequence_length": np.mean([len(s) for s in unit_sequences]),
-        "min_sequence_length": min(len(s) for s in unit_sequences),
-        "max_sequence_length": max(len(s) for s in unit_sequences),
-    }
-    
     print(f"  Total units: {validation_results['unit_stats']['total_units']:,}")
-    print(f"  Unique units: {validation_results['unit_stats']['unique_units']}/{num_units}")
-    print(f"  Unit range: {validation_results['unit_stats']['unit_range']}")
-    print(f"  Avg sequence length: {validation_results['unit_stats']['avg_sequence_length']:.1f}")
+    print(f"  Unique: {validation_results['unit_stats']['unique_units']}/{num_units}")
+    print(f"  Range: {validation_results['unit_stats']['unit_range']}")
     
-    # Synthesize audio if Generator available
+    # Synthesize if Generator available
     if generator is not None:
-        print(f"\n🎵 Synthesizing audio from units...")
+        print(f"\n🎵 Synthesizing audio...")
         
         for idx, units in enumerate(tqdm(unit_sequences[:num_samples], desc="Synthesizing")):
             try:
-                # Convert to tensor
                 units_tensor = torch.LongTensor(units).unsqueeze(0).to(device)
                 
-                # Synthesize
                 with torch.no_grad():
-                    synth_audio = generator(units_tensor)
-                    synth_audio = synth_audio.squeeze().cpu().numpy()
+                    synth_audio = generator(units_tensor).squeeze().cpu().numpy()
                 
-                # Normalize
                 if len(synth_audio) > 0:
                     max_val = np.max(np.abs(synth_audio))
                     if max_val > 0:
                         synth_audio = synth_audio / max_val * 0.95
                 
-                # Save audio
                 output_path = os.path.join(CHECKING_OUTPUT_DIR, f"synthesized_{idx:04d}.wav")
                 write(output_path, 16000, (synth_audio * 32767).astype(np.int16))
                 
                 validation_results["synthesis_results"].append({
                     "sequence_idx": idx,
                     "num_units": len(units),
-                    "audio_length_samples": len(synth_audio),
                     "audio_length_sec": len(synth_audio) / 16000,
-                    "output_path": output_path
                 })
                 
             except Exception as e:
-                print(f"⚠️  Error synthesizing sequence {idx}: {e}")
-                validation_results["synthesis_results"].append({
-                    "sequence_idx": idx,
-                    "error": str(e)
-                })
+                print(f"⚠️  Error: {e}")
+                validation_results["synthesis_results"].append({"sequence_idx": idx, "error": str(e)})
         
-        print(f"✓ Synthesized {len([r for r in validation_results['synthesis_results'] if 'error' not in r])} audio files")
+        successful = len([r for r in validation_results['synthesis_results'] if 'error' not in r])
+        print(f"✓ Synthesized {successful} files")
     else:
-        print(f"\n⏭️  Skipping synthesis (no Generator model)")
+        print(f"\n⏭️  Skipping synthesis")
     
-    # Save validation results
+    # Save results
     results_path = os.path.join(CHECKING_OUTPUT_DIR, "validation_results.json")
     with open(results_path, 'w') as f:
         json.dump(validation_results, f, indent=2)
     
-    print(f"\n✓ Validation complete!")
-    print(f"  Results saved to: {results_path}")
-    if generator:
-        print(f"  Synthesized audio saved to: {CHECKING_OUTPUT_DIR}")
+    print(f"\n✓ Results saved: {results_path}")
     
-    # Commit volume changes
     audio_volume.commit()
-    
     return validation_results
 
+# %% [markdown]
+# ## Entry Point
 
+# %%
 @app.local_entrypoint()
 def main(num_samples: int = 10, generator_checkpoint: str = None, use_random: bool = False):
-    """
-    Run validation and synthesis
-    
-    Args:
-        num_samples: Number of unit sequences to test (default: 10)
-        generator_checkpoint: Path to Generator checkpoint file (optional)
-        use_random: Use random unit sequences instead of real ones (default: False)
-    """
-    print("🚀 Starting Acoustic Units Validation & Synthesis")
+    """Run validation and synthesis."""
+    print("🚀 Starting Acoustic Units Validation")
     print("=" * 60)
-    
-    checkpoint_path = None
-    if generator_checkpoint:
-        # If provided, assume it's a local path that needs to be uploaded
-        # For now, we'll expect it to be already in the Modal volume
-        checkpoint_path = generator_checkpoint
     
     results = validate_and_synthesize.remote(
         num_samples=num_samples,
-        generator_checkpoint_path=checkpoint_path,
+        generator_checkpoint_path=generator_checkpoint,
         use_random_units=use_random
     )
     
     if results:
-        print("\n✅ Validation complete!")
-        print(f"  Validated {results['total_sequences']} sequences")
+        print(f"\n✅ Validated {results['total_sequences']} sequences")
         if results['synthesis_results']:
             successful = len([r for r in results['synthesis_results'] if 'error' not in r])
-            print(f"  Successfully synthesized {successful} audio files")
+            print(f"  Synthesized {successful} files")
     else:
-        print("\n❌ Validation failed. Check logs above for details.")
+        print("\n❌ Validation failed.")

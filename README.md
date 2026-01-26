@@ -136,31 +136,51 @@ flowchart TB
 ```
 model-training/
 ├── src/
-│   ├── models/          # Model architectures
-│   │   ├── generator.py
-│   │   └── discriminator.py
-│   ├── training/        # Training logic
-│   │   ├── phase1_acoustic.py
-│   │   ├── phase2_bpe.py
-│   │   └── phase3_vocoder.py
-│   └── data/            # Data processing
-│       ├── audio_utils.py
-│       └── dataset.py
-├── scripts/             # CLI utilities
-│   ├── segment_audio.py
-│   ├── upload_to_modal.py
-│   └── download_results.py
-├── notebooks/           # Jupytext notebooks (.py)
+│   ├── models/                    # Model architectures (jupytext)
+│   │   ├── generator.py           # Vocoder generator
+│   │   └── discriminator.py       # Multi-scale discriminator
+│   ├── training/                  # Modal training scripts (jupytext)
+│   │   ├── phase1_acoustic.py     # XLSR-53 + K-Means
+│   │   ├── phase2_bpe.py          # BPE tokenizer
+│   │   ├── phase3_vocoder.py      # GAN vocoder training
+│   │   ├── vocoder_test.py        # Quality metrics
+│   │   └── validate_units.py      # Unit validation
+│   └── data/                      # Data processing
+│       └── __init__.py
+├── scripts/                       # CLI utilities
+│   ├── segment_audio.py           # Local audio segmentation
+│   ├── upload_to_modal.py         # Upload to Modal volume
+│   ├── download_results.py        # Download outputs
+│   ├── delete_from_modal.py       # Clean Modal volume
+│   └── count_duration.py          # Audio statistics
+├── notebooks/                     # Analysis notebooks (jupytext)
 │   └── analyze_results.py
-├── docs/                # Documentation
-│   ├── ARCHITECTURE.md
-│   └── PIPELINE.md
-├── modal_downloads/     # Downloaded results
-│   ├── phase1_outputs/
+├── docs/                          # Documentation
+│   ├── ARCHITECTURE.md            # Model deep dive
+│   └── PIPELINE.md                # Execution guide
+├── modal_downloads/               # Downloaded results
 │   ├── phase2_outputs/
 │   └── vocoder_test/
 └── README.md
 ```
+
+## Jupytext Format
+
+All Python files in `src/` and `notebooks/` use [jupytext](https://jupytext.readthedocs.io/) format:
+
+```python
+# %% [markdown]
+# # Title
+# Description in markdown
+
+# %%
+import torch
+# Executable code
+```
+
+Open these files as Jupyter notebooks:
+- **VS Code**: Install Jupytext extension, then "Open as Notebook"
+- **JupyterLab**: `pip install jupytext`, notebooks open automatically
 
 ## Quick Start
 

@@ -1,23 +1,59 @@
-"""
-Modal script to test the trained vocoder
-Synthesizes audio from unit sequences and compares with original
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.20.0
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
 
-Run with: python3 -m modal run modal_vocoder_test.py::main
-"""
+# %% [markdown]
+# # Vocoder Quality Test
+#
+# Tests the trained vocoder by synthesizing audio from unit sequences
+# and comparing with original audio using quality metrics.
+#
+# ## Metrics
+#
+# - **SNR (Signal-to-Noise Ratio)**: Measures reconstruction fidelity
+#   - \> 10 dB: Excellent
+#   - 5-10 dB: Good
+#   - 0-5 dB: Fair
+#   - < 0 dB: Poor
+#
+# - **MCD (Mel Cepstral Distortion)**: Measures spectral similarity
+#   - < 5: Excellent
+#   - 5-8: Good
+#   - 8-12: Acceptable
+#   - \> 12: Needs improvement
+#
+# ## Run on Modal
+#
+# ```bash
+# python3 -m modal run src/training/vocoder_test.py::main --num-samples 20
+# ```
 
+# %% [markdown]
+# ## Modal Configuration
+
+# %%
 import modal
 import os
 
-# Create Modal app
+# %%
 app = modal.App("bible-vocoder-test")
 
-# Create persistent volume
 audio_volume = modal.Volume.from_name(
     "bible-audio-data",
     create_if_missing=True
 )
 
-# Create image with dependencies
+# %%
 image = (
     modal.Image.debian_slim()
     .apt_install("ffmpeg")
@@ -34,24 +70,26 @@ image = (
     )
 )
 
-# Mount points
+# %%
 AUDIO_MOUNT = "/mnt/audio_data"
 SEGMENTED_DIR = f"{AUDIO_MOUNT}/segmented_audio"
 OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
 VOCODER_DIR = f"{AUDIO_MOUNT}/vocoder_checkpoints"
 TEST_OUTPUT_DIR = f"{AUDIO_MOUNT}/vocoder_test_output"
 
+# %% [markdown]
+# ## Generator Model
+#
+# Same architecture as training (320x upsampling).
 
-# Generator model definition (same as training)
+# %%
 GENERATOR_CODE = '''
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class Generator(nn.Module):
-    """
-    Upsampling factor: 5 * 4 * 4 * 4 = 320x (matches XLSR-53 hop size)
-    """
+    """Upsampling: 5 × 4 × 4 × 4 = 320x"""
     def __init__(self, num_units=100, embed_dim=256):
         super().__init__()
         
@@ -59,7 +97,6 @@ class Generator(nn.Module):
         self.unit_embed = nn.Embedding(num_units, embed_dim)
         self.pre_conv = nn.Conv1d(embed_dim, 512, 7, padding=3)
         
-        # Upsample blocks: 5*4*4*4 = 320x total
         self.upsamples = nn.ModuleList([
             self._make_upsample_block(512, 256, kernel=10, stride=5),
             self._make_upsample_block(256, 128, kernel=8, stride=4),
@@ -92,7 +129,6 @@ class Generator(nn.Module):
     def forward(self, x):
         x = self.unit_embed(x)
         x = x.transpose(1, 2)
-        
         x = self.pre_conv(x)
         x = F.leaky_relu(x, 0.1)
         
@@ -104,11 +140,15 @@ class Generator(nn.Module):
         
         x = self.post_conv(x)
         x = torch.tanh(x)
-        
         return x.squeeze(1)
 '''
 
+# %% [markdown]
+# ## Test Function
+#
+# Synthesizes audio and computes quality metrics.
 
+# %%
 @app.function(
     image=image,
     volumes={AUDIO_MOUNT: audio_volume},
@@ -116,9 +156,7 @@ class Generator(nn.Module):
     gpu="A10G",
 )
 def test_vocoder(num_samples: int = 20):
-    """
-    Test the trained vocoder by synthesizing audio and comparing quality
-    """
+    """Test vocoder quality on random samples."""
     import torch
     import numpy as np
     import json
@@ -139,8 +177,6 @@ def test_vocoder(num_samples: int = 20):
     print(f"Device: {device}")
     
     # Load Generator
-    print("\n📦 Loading Generator model...")
-    
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(GENERATOR_CODE)
         gen_path = f.name
@@ -152,7 +188,6 @@ def test_vocoder(num_samples: int = 20):
     
     generator = Generator(num_units=100).to(device)
     
-    # Load checkpoint
     checkpoint_path = os.path.join(VOCODER_DIR, "vocoder_final.pt")
     if not os.path.exists(checkpoint_path):
         print(f"❌ Checkpoint not found: {checkpoint_path}")
@@ -161,29 +196,20 @@ def test_vocoder(num_samples: int = 20):
     checkpoint = torch.load(checkpoint_path, map_location=device)
     generator.load_state_dict(checkpoint['generator_state_dict'])
     generator.eval()
-    print(f"✓ Generator loaded from: {checkpoint_path}")
+    print(f"✓ Generator loaded")
     
     # Load corpus
     corpus_path = os.path.join(OUTPUT_DIR, "portuguese_corpus_timestamped.json")
     with open(corpus_path, 'r') as f:
         corpus = json.load(f)
     
-    print(f"✓ Corpus loaded: {len(corpus)} entries")
-    
-    # Select random samples
     sample_keys = list(corpus.keys())
     np.random.shuffle(sample_keys)
     selected_keys = sample_keys[:num_samples]
     
-    # Test results
-    results = {
-        "num_samples": num_samples,
-        "samples": [],
-        "aggregate_metrics": {}
-    }
-    
+    results = {"num_samples": num_samples, "samples": [], "aggregate_metrics": {}}
     all_snr = []
-    all_mcd = []  # Mel Cepstral Distortion
+    all_mcd = []
     
     print(f"\n🔬 Testing {num_samples} samples...")
     
@@ -191,13 +217,11 @@ def test_vocoder(num_samples: int = 20):
         data = corpus[segment_name]
         units = data['units']
         
-        # Find original audio
         audio_path = os.path.join(SEGMENTED_DIR, segment_name + ".wav")
         if not os.path.exists(audio_path):
             continue
         
         try:
-            # Load original audio
             original_audio, sr = sf.read(audio_path)
             if sr != 16000:
                 original_audio = librosa.resample(original_audio, orig_sr=sr, target_sr=16000)
@@ -205,65 +229,51 @@ def test_vocoder(num_samples: int = 20):
             if len(original_audio.shape) > 1:
                 original_audio = original_audio.mean(axis=1)
             
-            # Synthesize audio
             units_tensor = torch.LongTensor(units).unsqueeze(0).to(device)
             
             with torch.no_grad():
-                synth_audio = generator(units_tensor)
-                synth_audio = synth_audio.squeeze().cpu().numpy()
+                synth_audio = generator(units_tensor).squeeze().cpu().numpy()
             
-            # Normalize
             synth_audio = synth_audio / (np.max(np.abs(synth_audio)) + 1e-8) * 0.95
             
-            # Match lengths for comparison
             min_len = min(len(original_audio), len(synth_audio))
             original_segment = original_audio[:min_len]
             synth_segment = synth_audio[:min_len]
             
-            # Calculate metrics
-            # 1. Signal-to-Noise Ratio (treating original as signal, difference as noise)
+            # SNR
             diff = original_segment - synth_segment
             signal_power = np.mean(original_segment ** 2)
             noise_power = np.mean(diff ** 2)
             snr = 10 * np.log10(signal_power / (noise_power + 1e-10))
             all_snr.append(snr)
             
-            # 2. Mel Cepstral Distortion
+            # MCD
             try:
                 orig_mfcc = librosa.feature.mfcc(y=original_segment, sr=16000, n_mfcc=13)
                 synth_mfcc = librosa.feature.mfcc(y=synth_segment, sr=16000, n_mfcc=13)
                 
                 min_frames = min(orig_mfcc.shape[1], synth_mfcc.shape[1])
-                orig_mfcc = orig_mfcc[:, :min_frames]
-                synth_mfcc = synth_mfcc[:, :min_frames]
-                
-                mcd = np.mean(np.sqrt(2 * np.sum((orig_mfcc - synth_mfcc) ** 2, axis=0)))
+                mcd = np.mean(np.sqrt(2 * np.sum((orig_mfcc[:, :min_frames] - synth_mfcc[:, :min_frames]) ** 2, axis=0)))
                 all_mcd.append(mcd)
             except:
                 mcd = None
             
-            # Save synthesized audio
-            if idx < 10:  # Save first 10 samples
-                output_path = os.path.join(TEST_OUTPUT_DIR, f"synth_{idx:04d}.wav")
-                write(output_path, 16000, (synth_audio * 32767).astype(np.int16))
-                
-                orig_output_path = os.path.join(TEST_OUTPUT_DIR, f"orig_{idx:04d}.wav")
-                write(orig_output_path, 16000, (original_segment * 32767).astype(np.int16))
+            # Save samples
+            if idx < 10:
+                write(os.path.join(TEST_OUTPUT_DIR, f"synth_{idx:04d}.wav"), 16000, (synth_audio * 32767).astype(np.int16))
+                write(os.path.join(TEST_OUTPUT_DIR, f"orig_{idx:04d}.wav"), 16000, (original_segment * 32767).astype(np.int16))
             
             results["samples"].append({
-                "segment_name": segment_name[:50] + "..." if len(segment_name) > 50 else segment_name,
-                "original_length_sec": len(original_audio) / 16000,
-                "synth_length_sec": len(synth_audio) / 16000,
-                "num_units": len(units),
-                "snr_db": float(snr) if snr else None,
+                "segment_name": segment_name[:50],
+                "snr_db": float(snr),
                 "mcd": float(mcd) if mcd else None,
             })
             
         except Exception as e:
-            print(f"⚠️  Error processing {segment_name[:30]}...: {e}")
+            print(f"⚠️  Error: {e}")
             continue
     
-    # Aggregate metrics
+    # Aggregate
     results["aggregate_metrics"] = {
         "mean_snr_db": float(np.mean(all_snr)) if all_snr else None,
         "std_snr_db": float(np.std(all_snr)) if all_snr else None,
@@ -272,75 +282,40 @@ def test_vocoder(num_samples: int = 20):
         "samples_tested": len(results["samples"]),
     }
     
-    # Print summary
     print("\n" + "=" * 60)
-    print("📊 Test Results Summary")
+    print("📊 Results")
     print("=" * 60)
-    print(f"  Samples tested: {results['aggregate_metrics']['samples_tested']}")
     if results['aggregate_metrics']['mean_snr_db']:
-        print(f"  Mean SNR: {results['aggregate_metrics']['mean_snr_db']:.2f} dB (±{results['aggregate_metrics']['std_snr_db']:.2f})")
+        print(f"  SNR: {results['aggregate_metrics']['mean_snr_db']:.2f} dB (±{results['aggregate_metrics']['std_snr_db']:.2f})")
     if results['aggregate_metrics']['mean_mcd']:
-        print(f"  Mean MCD: {results['aggregate_metrics']['mean_mcd']:.2f} (±{results['aggregate_metrics']['std_mcd']:.2f})")
-    
-    print("\n📁 Quality Interpretation:")
-    if results['aggregate_metrics']['mean_snr_db']:
-        snr = results['aggregate_metrics']['mean_snr_db']
-        if snr > 10:
-            print("  SNR > 10 dB: Excellent reconstruction")
-        elif snr > 5:
-            print("  SNR 5-10 dB: Good reconstruction")
-        elif snr > 0:
-            print("  SNR 0-5 dB: Fair reconstruction")
-        else:
-            print("  SNR < 0 dB: Poor reconstruction - needs more training")
-    
-    if results['aggregate_metrics']['mean_mcd']:
-        mcd = results['aggregate_metrics']['mean_mcd']
-        if mcd < 5:
-            print("  MCD < 5: Excellent audio quality")
-        elif mcd < 8:
-            print("  MCD 5-8: Good audio quality")
-        elif mcd < 12:
-            print("  MCD 8-12: Acceptable audio quality")
-        else:
-            print("  MCD > 12: Needs improvement")
+        print(f"  MCD: {results['aggregate_metrics']['mean_mcd']:.2f} (±{results['aggregate_metrics']['std_mcd']:.2f})")
     
     # Save results
-    results_path = os.path.join(TEST_OUTPUT_DIR, "test_results.json")
-    with open(results_path, 'w') as f:
+    with open(os.path.join(TEST_OUTPUT_DIR, "test_results.json"), 'w') as f:
         json.dump(results, f, indent=2)
     
-    print(f"\n✓ Results saved to: {results_path}")
-    print(f"✓ Sample audio saved to: {TEST_OUTPUT_DIR}")
-    
-    # Commit volume
     audio_volume.commit()
-    
     return results
 
+# %% [markdown]
+# ## Entry Point
 
+# %%
 @app.local_entrypoint()
 def main(num_samples: int = 20):
-    """
-    Test the trained vocoder
-    
-    Args:
-        num_samples: Number of samples to test (default: 20)
-    """
+    """Test the trained vocoder."""
     print("🔬 Starting Vocoder Quality Test")
-    print("=" * 60)
     
     results = test_vocoder.remote(num_samples=num_samples)
     
     if results:
-        print("\n✅ Test Complete!")
-        print(f"  Samples tested: {results['aggregate_metrics']['samples_tested']}")
+        print(f"\n✅ Tested {results['aggregate_metrics']['samples_tested']} samples")
         if results['aggregate_metrics']['mean_snr_db']:
-            print(f"  Mean SNR: {results['aggregate_metrics']['mean_snr_db']:.2f} dB")
+            print(f"  SNR: {results['aggregate_metrics']['mean_snr_db']:.2f} dB")
         if results['aggregate_metrics']['mean_mcd']:
-            print(f"  Mean MCD: {results['aggregate_metrics']['mean_mcd']:.2f}")
+            print(f"  MCD: {results['aggregate_metrics']['mean_mcd']:.2f}")
         
-        print("\n📥 Download test audio with:")
-        print("  python3 -m modal volume get bible-audio-data vocoder_test_output/ ./modal_downloads/vocoder_test/")
+        print("\n📥 Download results:")
+        print("  modal volume get bible-audio-data vocoder_test_output/ ./modal_downloads/vocoder_test/")
     else:
-        print("\n❌ Test failed. Check logs above.")
+        print("\n❌ Test failed.")
