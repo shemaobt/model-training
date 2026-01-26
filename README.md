@@ -1,271 +1,146 @@
-# Bible Audio Acoustic Tokenization Pipeline
+# Bible Audio Acoustic Tokenization & Vocoder
 
-A complete pipeline for discovering acoustic units from Portuguese Bible audio and training a vocoder to synthesize speech from discrete tokens.
+A machine learning pipeline for **unsupervised speech representation learning**. This project converts continuous speech (specifically the Bible) into discrete acoustic tokens and learns to resynthesize speech from those tokens.
 
-## Overview
+The goal is to enable NLP-like capabilities (translation, search, pattern discovery) directly on audio data for low-resource languages (like Sateré-Mawé).
 
-This project implements an **unsupervised acoustic tokenization** system that:
-1. Extracts speech representations using XLSR-53 (multilingual wav2vec2)
-2. Discovers discrete acoustic units via K-Means clustering
-3. Learns acoustic patterns using BPE tokenization
-4. Trains a vocoder to convert units back to audio
+## 🧠 Core Concept
+
+Traditional speech processing relies on text transcripts (ASR). We don't.
+We use **Self-Supervised Learning** to discover the "units" of a language purely from audio.
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph Input
-        A[🎵 Raw Audio<br/>Portuguese Bible<br/>~84 hours]
+        A[🗣️ Raw Audio]
     end
-    
-    subgraph Phase1[Phase 1: Acoustic Tokenization]
-        B[Convert MP3 → WAV<br/>16kHz mono]
-        C[Segment by Silence<br/>18,072 segments]
-        D[XLSR-53 Features<br/>Layer 14, 1024-dim]
-        E[K-Means Clustering<br/>100 acoustic units]
+
+    subgraph Discretization
+        B[XLSR-53<br/>Features] --> C[K-Means<br/>Clustering] --> D[Discrete Tokens<br/>31 87 14...]
     end
-    
-    subgraph Phase2[Phase 2: Pattern Discovery]
-        F[Unit Sequences<br/>Integer tokens]
-        G[BPE Tokenizer<br/>SentencePiece]
-        H[Acoustic Motifs<br/>Recurring patterns]
+
+    subgraph Applications
+        D --> E[Language Modeling<br/>(BPE, GPT)]
+        D --> F[Vocoder<br/>(Synthesis)]
     end
+
+    A --> B
+    F --> G[🗣️ Resynthesized Audio]
     
-    subgraph Phase3[Phase 3: Vocoder Training]
-        I[Unit + Audio Pairs]
-        J[Generator<br/>320x upsampling]
-        K[Discriminator<br/>Multi-scale]
-        L[Synthesized Audio]
-    end
-    
-    A --> B --> C --> D --> E
-    E --> F --> G --> H
-    E --> I
-    C --> I
-    I --> J
-    J <--> K
-    J --> L
-    
-    style A fill:#e1f5fe
-    style E fill:#c8e6c9
-    style H fill:#fff3e0
-    style L fill:#f3e5f5
+    style D fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
-## Pipeline Phases
+## 🏗️ Pipeline Architecture
 
-### Phase 1: Acoustic Unit Discovery
+The pipeline consists of three distinct training phases.
 
-Discovers 100 discrete acoustic units from continuous speech using self-supervised representations.
+### Phase 1: Acoustic Tokenization
+Extracts features from audio and learns a discrete vocabulary of 100 sounds.
 
 ```mermaid
 flowchart LR
-    subgraph Feature Extraction
-        A[Audio Segment] --> B[XLSR-53<br/>wav2vec2-large-xlsr-53]
-        B --> C[Hidden States<br/>Layer 14]
-        C --> D[1024-dim vectors<br/>~50 per second]
-    end
-    
-    subgraph Clustering
-        D --> E[MiniBatch K-Means<br/>k=100]
-        E --> F[Cluster IDs<br/>0-99]
-    end
-    
-    F --> G[Unit Sequence<br/>e.g., 31 31 87 43 17...]
+    A[Audio Segment] -->|XLSR-53 Layer 14| B[1024-dim Vectors]
+    B -->|K-Means| C[Cluster Centroids]
+    B -->|Nearest Neighbor| D[Unit Sequence]
 ```
 
-**Key Parameters:**
-- Model: `facebook/wav2vec2-large-xlsr-53`
-- Layer: 14 (best for phonetic information)
-- Clusters: 100 (balances granularity vs. trainability)
-- Frame rate: ~20ms per unit (320 samples at 16kHz)
-
-### Phase 2: BPE Motif Discovery
-
-Discovers recurring acoustic patterns (motifs) using Byte Pair Encoding.
+### Phase 2: Pattern Discovery (BPE)
+Analyzes the sequence of units to find recurring motifs (acoustic "words").
 
 ```mermaid
 flowchart LR
-    A[Unit Sequences<br/>18,072 files] --> B[Concatenate<br/>~15M tokens]
-    B --> C[SentencePiece BPE<br/>Training]
-    C --> D[Vocabulary<br/>100 motifs]
-    D --> E[Motif Analysis<br/>Frequency stats]
+    A[Unit Sequence<br/>31 31 87 43] -->|SentencePiece| B[BPE Training]
+    B --> C[Vocabulary<br/>Motifs]
+    C --> D[Tokenized Sequence<br/>105 43]
 ```
 
-**What BPE discovers:**
-- Common unit pairs → merged into single token
-- Recurring patterns → potential phonemes/syllables
-- Frequency distribution → language structure
-
-### Phase 3: Vocoder Training
-
-Trains a GAN-based vocoder to convert discrete units back to audio.
+### Phase 3: Vocoder (Synthesis)
+Trains a generative model to convert discrete units back into continuous audio waveforms.
 
 ```mermaid
 flowchart TB
-    subgraph Generator
-        A[Unit Sequence<br/>e.g., 50 units] --> B[Embedding<br/>100 → 256 dim]
-        B --> C[Pre-Conv<br/>256 → 512]
-        C --> D[Upsample 5x<br/>512 → 256]
-        D --> E[Upsample 4x<br/>256 → 128]
-        E --> F[Upsample 4x<br/>128 → 64]
-        F --> G[Upsample 4x<br/>64 → 32]
-        G --> H[Residual Blocks<br/>x3]
-        H --> I[Post-Conv<br/>32 → 1]
-        I --> J[Audio<br/>50 × 320 = 16,000 samples]
-    end
-    
-    subgraph Discriminator
-        K[Real/Fake Audio] --> L[Scale 1<br/>Original]
-        K --> M[Scale 2<br/>2x downsample]
-        K --> N[Scale 3<br/>4x downsample]
-        L --> O[Real/Fake Score]
-        M --> O
-        N --> O
-    end
-    
-    J --> K
+    A[Unit Sequence] -->|Generator| B[Fake Audio]
+    C[Real Audio] -->|Discriminator| D[Real/Fake Score]
+    B -->|Discriminator| D
+    B -->|Mel Loss| C
 ```
 
-**Architecture:**
-- Upsampling: 5 × 4 × 4 × 4 = 320x (matches XLSR-53 frame rate)
-- Generator: 3.2M parameters
-- Discriminator: Multi-scale (3 scales)
-- Loss: Mel spectrogram L1 + Adversarial
+## 🚀 Quick Start
 
-## Project Structure
+### Prerequisites
+- Python 3.10+
+- Modal account (for cloud GPU training)
+- `ffmpeg` installed locally
+
+### Installation
+```bash
+pip install -r requirements.txt
+python3 -m modal token set --token-id <id> --token-secret <secret>
+```
+
+### Execution Flow
+
+**1. Segment Audio Locally** (Generic support for multiple languages)
+```bash
+# For Portuguese
+python scripts/segment_audio.py --language portuguese
+
+# For Sateré-Mawé
+python scripts/segment_audio.py --language satere
+```
+
+**2. Upload to Cloud Storage**
+```bash
+python3 -m modal run scripts/upload_to_modal.py --language satere
+```
+
+**3. Run Training Pipeline (on Modal)**
+```bash
+# Phase 1: Discover acoustic units
+python3 -m modal run --detach src/training/phase1_acoustic.py
+
+# Phase 2: Learn motifs (BPE)
+python3 -m modal run --detach src/training/phase2_bpe.py
+
+# Phase 3: Train Vocoder (Synthesizer)
+python3 -m modal run --detach src/training/phase3_vocoder.py
+```
+
+## 📂 Project Structure
 
 ```
 model-training/
 ├── src/
-│   ├── models/                    # Model architectures (jupytext)
-│   │   ├── generator.py           # Vocoder generator
-│   │   └── discriminator.py       # Multi-scale discriminator
-│   ├── training/                  # Modal training scripts (jupytext)
-│   │   ├── phase1_acoustic.py     # XLSR-53 + K-Means
-│   │   ├── phase2_bpe.py          # BPE tokenizer
-│   │   ├── phase3_vocoder.py      # GAN vocoder training
-│   │   ├── vocoder_test.py        # Quality metrics
-│   │   └── validate_units.py      # Unit validation
-│   └── data/                      # Data processing
-│       └── __init__.py
-├── scripts/                       # CLI utilities
-│   ├── segment_audio.py           # Local audio segmentation
-│   ├── upload_to_modal.py         # Upload to Modal volume
-│   ├── download_results.py        # Download outputs
-│   ├── delete_from_modal.py       # Clean Modal volume
-│   └── count_duration.py          # Audio statistics
-├── notebooks/                     # Analysis notebooks (jupytext)
-│   └── analyze_results.py
-├── docs/                          # Documentation
-│   ├── ARCHITECTURE.md            # Model deep dive
-│   └── PIPELINE.md                # Execution guide
-├── modal_downloads/               # Downloaded results
-│   ├── phase2_outputs/
-│   └── vocoder_test/
-└── README.md
+│   ├── models/                    # Neural Network Architectures (Jupytext)
+│   │   ├── generator.py           # Vocoder (Upsamples units to audio)
+│   │   └── discriminator.py       # Quality control (Multi-scale GAN)
+│   ├── training/                  # Cloud Training Scripts
+│   │   ├── phase1_acoustic.py     # Feature extraction & clustering
+│   │   ├── phase3_vocoder.py      # GAN training loop
+│   │   └── ...
+├── scripts/                       # Local Utilities
+│   ├── segment_audio.py           # Silence-based segmentation
+│   └── upload_to_modal.py         # Data transfer
+├── docs/
+│   ├── ARCHITECTURE.md            # Deep dive into design decisions
+│   └── PIPELINE.md                # Step-by-step manual
+└── audio_data/                    # Raw input files (gitignored)
 ```
 
-## Jupytext Format
+## 🔬 Design Decisions & Trade-offs
 
-All Python files in `src/` and `notebooks/` use [jupytext](https://jupytext.readthedocs.io/) format:
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a comprehensive analysis.
 
-```python
-# %% [markdown]
-# # Title
-# Description in markdown
+**Key Highlights:**
+- **Why 100 Units?** Balanced trade-off between phonetic granularity and model trainability.
+- **Why Layer 14?** Best layer in XLSR-53 for phonetic content, filtering out speaker identity.
+- **Why Robotic Audio?** We deliberately discarded pitch (F0) to focus on phonetic content. Future work involves pitch conditioning.
 
-# %%
-import torch
-# Executable code
-```
+## 📊 Results
 
-Open these files as Jupyter notebooks:
-- **VS Code**: Install Jupytext extension, then "Open as Notebook"
-- **JupyterLab**: `pip install jupytext`, notebooks open automatically
-
-## Quick Start
-
-### Prerequisites
-
-```bash
-pip install modal torch torchaudio transformers scikit-learn sentencepiece tqdm
-python3 -m modal token set --token-id <your-id> --token-secret <your-secret>
-```
-
-### Run Pipeline
-
-```bash
-# Phase 1: Segment audio locally, upload to Modal
-python3 scripts/segment_audio.py
-python3 -m modal run scripts/upload_to_modal.py
-
-# Phase 1: Run acoustic tokenization on Modal
-python3 -m modal run --detach src/training/phase1_acoustic.py
-
-# Phase 2: Train BPE on acoustic units
-python3 -m modal run --detach src/training/phase2_bpe.py
-
-# Phase 3: Train vocoder
-python3 -m modal run --detach src/training/phase3_vocoder.py
-
-# Test vocoder quality
-python3 -m modal run src/training/vocoder_test.py
-```
-
-## Results
-
-### Dataset Statistics
-
-| Metric | Value |
-|--------|-------|
-| Source | Portuguese Bible (Old + New Testament) |
-| Total Duration | ~84 hours |
-| Segments | 18,072 |
-| Acoustic Units | 100 clusters |
-| BPE Vocabulary | 100 motifs |
-
-### Training Results
-
-| Phase | Epochs | Best Metric |
-|-------|--------|-------------|
-| Phase 1 | N/A (K-Means) | 100 clusters, ~15M tokens |
-| Phase 2 | N/A (BPE) | 100 motifs discovered |
-| Phase 3 | 373 | Mel Loss: 81.2 |
-
-### Vocoder Quality
-
-| Metric | Value | Interpretation |
-|--------|-------|----------------|
-| SNR | -1.95 dB | Reconstruction differs from original |
-| MCD | 96.4 | Acceptable for proof-of-concept |
-| Length Match | 100% | ✓ Correct timing (320x upsampling) |
-
-## Architecture Deep Dive
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed explanations of:
-- XLSR-53 feature extraction
-- K-Means clustering strategy
-- Generator/Discriminator design
-- Loss functions and training dynamics
-
-## Known Limitations
-
-1. **Vocoder Quality**: Current model produces robotic audio due to:
-   - Information loss in 100-unit quantization
-   - Discriminator collapse (D loss → 0)
-   - Missing pitch/F0 conditioning
-
-2. **Improvements Needed**:
-   - HiFi-GAN architecture for better quality
-   - Multi-resolution STFT loss
-   - Pitch conditioning from original audio
+- **Compression:** ~775x reduction in bitrate (Raw Audio → Discrete Tokens).
+- **Intelligibility:** High. The vocoder successfully reconstructs words from tokens.
+- **Naturalness:** Low/Medium. Prosody is flat due to F0 loss.
 
 ## License
-
-Private - shemaobt organization only.
-
-## References
-
-- [wav2vec 2.0](https://arxiv.org/abs/2006.11477) - Self-supervised speech representations
-- [XLSR-53](https://arxiv.org/abs/2006.13979) - Cross-lingual speech representations
-- [HiFi-GAN](https://arxiv.org/abs/2010.05646) - High-fidelity vocoder architecture
-- [SentencePiece](https://github.com/google/sentencepiece) - BPE tokenization
+Private - shemaobt organization.
