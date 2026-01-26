@@ -68,8 +68,28 @@ image = (
 
 # %%
 AUDIO_MOUNT = "/mnt/audio_data"
-OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
-PHASE2_OUTPUT_DIR = f"{AUDIO_MOUNT}/phase2_output"
+
+# Language configuration
+LANGUAGE_CONFIGS = {
+    "portuguese": {
+        "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
+        "phase2_output_dir": f"{AUDIO_MOUNT}/phase2_output",
+        "bpe_prefix": "portuguese_bpe",
+    },
+    "satere": {
+        "output_dir": f"{AUDIO_MOUNT}/satere_units",
+        "phase2_output_dir": f"{AUDIO_MOUNT}/phase2_satere_output",
+        "bpe_prefix": "satere_bpe",
+    },
+}
+
+# Default paths (can be overridden via CLI)
+import os as _os
+_LANGUAGE = _os.environ.get("TRAINING_LANGUAGE", "portuguese")
+_config = LANGUAGE_CONFIGS.get(_LANGUAGE, LANGUAGE_CONFIGS["portuguese"])
+
+OUTPUT_DIR = _config["output_dir"]
+PHASE2_OUTPUT_DIR = _config["phase2_output_dir"]
 
 # %% [markdown]
 # ## BPE Tokenizer Training
@@ -277,9 +297,25 @@ def analyze_motifs():
 
 # %%
 @app.local_entrypoint()
-def main(vocab_size: int = 500, min_frequency: int = 5):
-    """Run Phase 2: BPE Tokenizer Training."""
+def main(language: str = "portuguese", vocab_size: int = 500, min_frequency: int = 5):
+    """Run Phase 2: BPE Tokenizer Training.
+    
+    Args:
+        language: Language to process ('portuguese' or 'satere')
+        vocab_size: Target vocabulary size
+        min_frequency: Minimum token frequency
+    """
+    # Set environment variable for language selection
+    import os
+    os.environ["TRAINING_LANGUAGE"] = language
+    
+    config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
+    
     print("🚀 Starting Phase 2: BPE Tokenizer Training")
+    print("=" * 60)
+    print(f"  Language: {language}")
+    print(f"  Input: {config['output_dir']}")
+    print(f"  Output: {config['phase2_output_dir']}")
     print("=" * 60)
     
     print("\n🔤 Step 1: Training BPE tokenizer...")
@@ -299,6 +335,6 @@ def main(vocab_size: int = 500, min_frequency: int = 5):
             print(f"   Unique motifs: {analysis['unique_motifs']}")
         
         print("\n✅ Phase 2 complete!")
-        print(f"Results in: {PHASE2_OUTPUT_DIR}")
+        print(f"Results in: {config['phase2_output_dir']}")
     else:
         print("\n❌ Phase 2 failed.")

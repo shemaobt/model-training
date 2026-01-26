@@ -52,6 +52,7 @@ app = modal.App("full-training-pipeline")
 # %%
 @app.local_entrypoint()
 def main(
+    language: str = "portuguese",
     phases: str = "1,2,3",
     vocoder_version: str = "v2",
     detach: bool = True,
@@ -67,6 +68,7 @@ def main(
     Run the full training pipeline.
     
     Args:
+        language: Language to train on ('portuguese' or 'satere')
         phases: Comma-separated list of phases to run (1,2,3)
         vocoder_version: 'v1' or 'v2' (default: v2)
         detach: Run in detached mode (default: True)
@@ -83,6 +85,7 @@ def main(
     print("=" * 60)
     print("🚀 Full Training Pipeline")
     print("=" * 60)
+    print(f"  Language: {language}")
     print(f"  Phases to run: {phase_list}")
     print(f"  Vocoder version: {vocoder_version.upper()}")
     print(f"  Detached mode: {detach}")
@@ -97,14 +100,14 @@ def main(
     if 1 in phase_list:
         phase1_script = os.path.join(script_dir, "phase1_acoustic.py")
         if skip_segmentation:
-            cmd = f"python3 -m modal run {'--detach ' if detach else ''}{phase1_script}::main_skip_segmentation"
+            cmd = f"python3 -m modal run {'--detach ' if detach else ''}{phase1_script}::main_skip_segmentation --language {language}"
         else:
-            cmd = f"python3 -m modal run {'--detach ' if detach else ''}{phase1_script}::main"
+            cmd = f"python3 -m modal run {'--detach ' if detach else ''}{phase1_script}::main --language {language}"
         commands.append(("Phase 1: Acoustic Tokenization", cmd))
     
     if 2 in phase_list:
         phase2_script = os.path.join(script_dir, "phase2_bpe.py")
-        cmd = f"python3 -m modal run {'--detach ' if detach else ''}{phase2_script}::main"
+        cmd = f"python3 -m modal run {'--detach ' if detach else ''}{phase2_script}::main --language {language}"
         commands.append(("Phase 2: BPE Training", cmd))
     
     if 3 in phase_list:
@@ -112,7 +115,7 @@ def main(
             phase3_script = os.path.join(script_dir, "phase3_vocoder_v2.py")
             cmd = (
                 f"python3 -m modal run {'--detach ' if detach else ''}{phase3_script}::main "
-                f"--epochs {epochs} --batch-size {batch_size} "
+                f"--language {language} --epochs {epochs} --batch-size {batch_size} "
                 f"--segment-length {segment_length} --patience {patience}"
             )
         else:

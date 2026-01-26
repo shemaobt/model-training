@@ -59,10 +59,34 @@ image = (
 
 # %%
 AUDIO_MOUNT = "/mnt/audio_data"
-SEGMENTED_DIR = f"{AUDIO_MOUNT}/segmented_audio"
-OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
-VOCODER_DIR = f"{AUDIO_MOUNT}/vocoder_v2_checkpoints"
-TEST_OUTPUT_DIR = f"{AUDIO_MOUNT}/vocoder_v2_test_output"
+
+# Language configuration
+LANGUAGE_CONFIGS = {
+    "portuguese": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio",
+        "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
+        "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_checkpoints",
+        "test_output_dir": f"{AUDIO_MOUNT}/vocoder_v2_test_output",
+        "corpus_file": "portuguese_corpus_timestamped.json",
+    },
+    "satere": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_satere",
+        "output_dir": f"{AUDIO_MOUNT}/satere_units",
+        "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_satere_checkpoints",
+        "test_output_dir": f"{AUDIO_MOUNT}/vocoder_v2_satere_test_output",
+        "corpus_file": "satere_corpus_timestamped.json",
+    },
+}
+
+# Default paths (can be overridden via CLI)
+import os as _os
+_LANGUAGE = _os.environ.get("TRAINING_LANGUAGE", "portuguese")
+_config = LANGUAGE_CONFIGS.get(_LANGUAGE, LANGUAGE_CONFIGS["portuguese"])
+
+SEGMENTED_DIR = _config["segmented_dir"]
+OUTPUT_DIR = _config["output_dir"]
+VOCODER_DIR = _config["vocoder_dir"]
+TEST_OUTPUT_DIR = _config["test_output_dir"]
 
 # %% [markdown]
 # ## Generator V2 Definition
@@ -404,11 +428,24 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
 
 # %%
 @app.local_entrypoint()
-def main(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
-    """Test the trained V2 vocoder."""
+def main(language: str = "portuguese", num_samples: int = 50, checkpoint: str = "v2_best.pt"):
+    """Test the trained V2 vocoder.
+    
+    Args:
+        language: Language to test ('portuguese' or 'satere')
+        num_samples: Number of samples to test
+        checkpoint: Checkpoint file to use
+    """
+    # Set environment variable for language selection
+    import os
+    os.environ["TRAINING_LANGUAGE"] = language
+    
+    config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
+    
     print("🔬 Starting Vocoder V2 Quality Test")
+    print(f"  Language: {language}")
     print(f"  Samples: {num_samples}")
-    print(f"  Checkpoint: {checkpoint}")
+    print(f"  Checkpoint: {config['vocoder_dir']}/{checkpoint}")
     
     results = test_vocoder_v2.remote(num_samples=num_samples, checkpoint=checkpoint)
     

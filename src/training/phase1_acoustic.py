@@ -78,10 +78,33 @@ image = (
 # %%
 # Mount points
 AUDIO_MOUNT = "/mnt/audio_data"
-RAW_AUDIO_DIR = f"{AUDIO_MOUNT}/raw_audio"
-CONVERTED_DIR = f"{AUDIO_MOUNT}/converted_audio"
-SEGMENTED_DIR = f"{AUDIO_MOUNT}/segmented_audio"
-OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
+
+# Language configuration - set via environment or change here
+# Options: "portuguese", "satere"
+LANGUAGE_CONFIGS = {
+    "portuguese": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio",
+        "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
+        "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio",
+        "converted_dir": f"{AUDIO_MOUNT}/converted_audio",
+    },
+    "satere": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_satere",
+        "output_dir": f"{AUDIO_MOUNT}/satere_units",
+        "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio_satere",
+        "converted_dir": f"{AUDIO_MOUNT}/converted_audio_satere",
+    },
+}
+
+# Default language (can be overridden via CLI)
+import os as _os
+_LANGUAGE = _os.environ.get("TRAINING_LANGUAGE", "portuguese")
+_config = LANGUAGE_CONFIGS.get(_LANGUAGE, LANGUAGE_CONFIGS["portuguese"])
+
+RAW_AUDIO_DIR = _config["raw_audio_dir"]
+CONVERTED_DIR = _config["converted_dir"]
+SEGMENTED_DIR = _config["segmented_dir"]
+OUTPUT_DIR = _config["output_dir"]
 
 # %% [markdown]
 # ## Step 1: MP3 to WAV Conversion
@@ -529,9 +552,23 @@ def main():
 
 # %%
 @app.local_entrypoint()
-def main_skip_segmentation():
-    """Run pipeline using existing segments."""
+def main_skip_segmentation(language: str = "portuguese"):
+    """Run pipeline using existing segments.
+    
+    Args:
+        language: Language to process ('portuguese' or 'satere')
+    """
+    # Set environment variable for language selection
+    import os
+    os.environ["TRAINING_LANGUAGE"] = language
+    
+    config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
+    
     print("🚀 Starting Pipeline (skip segmentation)")
+    print("=" * 50)
+    print(f"  Language: {language}")
+    print(f"  Segments: {config['segmented_dir']}")
+    print(f"  Output: {config['output_dir']}")
     print("=" * 50)
     
     print("\n📁 Converting MP3 to WAV...")

@@ -85,9 +85,31 @@ image = (
 
 # %%
 AUDIO_MOUNT = "/mnt/audio_data"
-SEGMENTED_DIR = f"{AUDIO_MOUNT}/segmented_audio"
-OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
-VOCODER_DIR = f"{AUDIO_MOUNT}/vocoder_v2_checkpoints"
+
+# Language configuration
+LANGUAGE_CONFIGS = {
+    "portuguese": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio",
+        "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
+        "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_checkpoints",
+        "corpus_file": "portuguese_corpus_timestamped.json",
+    },
+    "satere": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_satere",
+        "output_dir": f"{AUDIO_MOUNT}/satere_units",
+        "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_satere_checkpoints",
+        "corpus_file": "satere_corpus_timestamped.json",
+    },
+}
+
+# Default paths (can be overridden via CLI)
+import os as _os
+_LANGUAGE = _os.environ.get("TRAINING_LANGUAGE", "portuguese")
+_config = LANGUAGE_CONFIGS.get(_LANGUAGE, LANGUAGE_CONFIGS["portuguese"])
+
+SEGMENTED_DIR = _config["segmented_dir"]
+OUTPUT_DIR = _config["output_dir"]
+VOCODER_DIR = _config["vocoder_dir"]
 
 # %% [markdown]
 # ## Model Definitions (V2)
@@ -773,6 +795,7 @@ def train_vocoder_v2(
 # %%
 @app.local_entrypoint()
 def main(
+    language: str = "portuguese",
     epochs: int = 1000,
     batch_size: int = 12,
     lr_g: float = 0.0002,
@@ -786,8 +809,21 @@ def main(
     lambda_stft: float = 2.0,
     lambda_fm: float = 2.0,
 ):
-    """Train the V2 vocoder model."""
+    """Train the V2 vocoder model.
+    
+    Args:
+        language: Language to train on ('portuguese' or 'satere')
+    """
+    # Get language-specific configuration
+    config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
+    vocoder_dir = config["vocoder_dir"]
+    
     print("🎵 Starting Vocoder V2 Training")
+    print("=" * 60)
+    print(f"  Language: {language}")
+    print(f"  Segments: {config['segmented_dir']}")
+    print(f"  Units: {config['output_dir']}")
+    print(f"  Checkpoints: {vocoder_dir}")
     print("=" * 60)
     print(f"  Max epochs: {epochs}")
     print(f"  Batch size: {batch_size}")
@@ -797,7 +833,11 @@ def main(
     print(f"  Early stopping: patience={patience}")
     print("=" * 60)
     
-    resume_path = os.path.join(VOCODER_DIR, resume) if resume else None
+    # Set environment variable for the remote function
+    import os
+    os.environ["TRAINING_LANGUAGE"] = language
+    
+    resume_path = os.path.join(vocoder_dir, resume) if resume else None
     
     result = train_vocoder_v2.remote(
         epochs=epochs,
