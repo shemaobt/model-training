@@ -20,8 +20,8 @@ flowchart LR
     end
 
     subgraph Applications
-        D --> E[Language Modeling<br/>(BPE, GPT)]
-        D --> F[Vocoder<br/>(Synthesis)]
+        D --> E["Language Modeling<br/>(BPE, GPT)"]
+        D --> F["Vocoder<br/>(Synthesis)"]
     end
 
     A --> B

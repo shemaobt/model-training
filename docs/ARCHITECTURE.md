@@ -24,17 +24,17 @@ flowchart TB
         A[Raw Waveform<br/>16kHz, mono]
     end
     
-    subgraph CNN Feature Encoder
+    subgraph CNN [CNN Feature Encoder]
         B[7 Conv Layers<br/>stride 5,2,2,2,2,2,2]
         C[Temporal Reduction<br/>320x downsample]
     end
     
-    subgraph Transformer Context
+    subgraph Transformer [Transformer Context]
         D[24 Transformer Layers<br/>1024-dim hidden]
         E[Self-Attention<br/>Global context]
     end
     
-    subgraph Extraction Point
+    subgraph Extraction [Extraction Point]
         F[Layer 14 Hidden States<br/>Phonetic abstraction]
     end
     
@@ -77,16 +77,16 @@ We transform continuous, high-dimensional vectors into a small set of discrete i
 
 ```mermaid
 flowchart LR
-    subgraph Continuous Space
+    subgraph Continuous [Continuous Space]
         A[XLSR-53 Vector<br/>1024-dim float32]
     end
     
-    subgraph The Bottleneck
+    subgraph Bottleneck [The Bottleneck]
         B[K-Means Clustering<br/>k=100]
         C[Euclidean Distance]
     end
     
-    subgraph Discrete Space
+    subgraph Discrete [Discrete Space]
         D[Unit ID<br/>Integer 0-99]
     end
     
@@ -121,16 +121,16 @@ Raw 20ms frames are too short to be meaningful. A single vowel might last 200ms 
 
 ```mermaid
 flowchart TB
-    subgraph Raw Sequence
+    subgraph Raw [Raw Sequence]
         A["31 31 31 87 43 43 17"]
     end
     
-    subgraph BPE Iteration 1
+    subgraph Iteration1 [BPE Iteration 1]
         B["Merge pair (31, 31) -> 100"]
         C["100 31 87 43 43 17"]
     end
     
-    subgraph BPE Iteration 2
+    subgraph Iteration2 [BPE Iteration 2]
         D["Merge pair (43, 43) -> 101"]
         E["100 31 87 101 17"]
     end
@@ -161,11 +161,11 @@ flowchart TB
         A[Unit Sequence<br/>T integers]
     end
     
-    subgraph Conditioning
+    subgraph Conditioning [Conditioning]
         B[Embedding<br/>100 → 256]
     end
     
-    subgraph Upsampling Stack
+    subgraph Upsampling [Upsampling Stack]
         C[ConvTranspose 5x<br/>512 ch]
         D[ConvTranspose 4x<br/>256 ch]
         E[ConvTranspose 4x<br/>128 ch]
@@ -173,7 +173,7 @@ flowchart TB
         Note[Total Upsample: 5*4*4*4 = 320x]
     end
     
-    subgraph Refinement
+    subgraph Refinement [Refinement]
         G[Residual Blocks<br/>Texture/Timbre]
         H[Post-Conv]
     end
@@ -199,15 +199,15 @@ flowchart TB
         A[Audio Waveform]
     end
     
-    subgraph Scale 1 (Original)
+    subgraph Scale1 [Scale 1 - Original]
         B1[Conv1D Layers] --> C1[Score: Fine Detail]
     end
     
-    subgraph Scale 2 (Downsampled 2x)
+    subgraph Scale2 [Scale 2 - Downsampled 2x]
         B2[AvgPool] --> C2[Conv1D Layers] --> D2[Score: Structure]
     end
     
-    subgraph Scale 3 (Downsampled 4x)
+    subgraph Scale3 [Scale 3 - Downsampled 4x]
         B3[AvgPool] --> C3[Conv1D Layers] --> D3[Score: Global Consistency]
     end
     
@@ -239,9 +239,9 @@ flowchart LR
     end
     
     subgraph Losses
-        L1[Mel Spectrogram Loss<br/>(L1 Distance)]
-        L2[Adversarial Loss<br/>(Fooling the Discriminator)]
-        L3[Feature Matching Loss<br/>(Internal Layer Similarity)]
+        L1["Mel Spectrogram Loss<br/>(L1 Distance)"]
+        L2["Adversarial Loss<br/>(Fooling the Discriminator)"]
+        L3["Feature Matching Loss<br/>(Internal Layer Similarity)"]
     end
     
     G --> L1
