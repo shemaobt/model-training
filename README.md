@@ -108,6 +108,8 @@ flowchart LR
     B -->|Nearest Neighbor| D[Unit Sequence]
 ```
 
+> **Note**: We currently use XLSR-53 for feature extraction. Meta's newer **MMS** model (1,400+ languages) may provide better representations for low-resource languages. See [docs/MMS_VS_XLSR53.md](docs/MMS_VS_XLSR53.md) for a detailed comparison and migration guide.
+
 ### Phase 2: Pattern Discovery (BPE)
 Analyzes the sequence of units to find recurring motifs (acoustic "words").
 
@@ -332,6 +334,8 @@ model-training/
 │   ├── VOCODER_V2_ARCHITECTURE.md # V2 complete technical guide
 │   ├── ROBOTIC_AUDIO_ANALYSIS.md  # Why V1 sounds robotic + solutions
 │   ├── SEGMENT_PREPARATION.md     # Segment size impact on training
+│   ├── MMS_VS_XLSR53.md           # MMS vs XLSR-53 comparison & migration
+│   ├── AUDIOLM_INTEGRATION.md     # AudioLM architecture & integration guide
 │   └── PIPELINE.md                # Step-by-step manual
 └── audio_data/                    # Raw input files (gitignored)
 ```
@@ -345,6 +349,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a comprehensive analysis.
 - **Why Layer 14?** Best layer in XLSR-53 for phonetic content, filtering out speaker identity.
 - **Why Robotic Audio (V1)?** We deliberately discarded pitch (F0) to focus on phonetic content.
 - **V2 Solution:** Re-injects pitch via conditioning, uses HiFi-GAN architecture and enhanced losses.
+
+### Future Directions
+
+| Technology | Document | Potential Benefit |
+|------------|----------|-------------------|
+| **MMS** (Meta) | [MMS_VS_XLSR53.md](docs/MMS_VS_XLSR53.md) | Better low-resource language support (1,400+ languages) |
+| **AudioLM** (Google) | [AUDIOLM_INTEGRATION.md](docs/AUDIOLM_INTEGRATION.md) | State-of-the-art quality via semantic + acoustic tokens |
+
+These documents provide deep technical analysis of how emerging architectures could enhance our pipeline.
 
 ## 📊 Results
 
