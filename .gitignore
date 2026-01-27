@@ -67,6 +67,20 @@ Thumbs.db
 *.swp
 *.swo
 
+# LaTeX build outputs (keep .tex source)
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.run.xml
+*.synctex.gz
+# Built paper PDFs (regenerate with latexmk)
+docs/paper.pdf
+docs/architecture_paper.pdf
+
 # Temporary files
 *.tmp
 *.temp
