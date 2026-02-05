@@ -156,7 +156,6 @@ class Generator(nn.Module):
     gpu="A10G",
 )
 def test_vocoder(num_samples: int = 20):
-    """Test vocoder quality on random samples."""
     import torch
     import numpy as np
     import json
@@ -176,7 +175,6 @@ def test_vocoder(num_samples: int = 20):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     
-    # Load Generator
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(GENERATOR_CODE)
         gen_path = f.name
@@ -198,7 +196,6 @@ def test_vocoder(num_samples: int = 20):
     generator.eval()
     print(f"✓ Generator loaded")
     
-    # Load corpus
     corpus_path = os.path.join(OUTPUT_DIR, "portuguese_corpus_timestamped.json")
     with open(corpus_path, 'r') as f:
         corpus = json.load(f)
@@ -240,14 +237,12 @@ def test_vocoder(num_samples: int = 20):
             original_segment = original_audio[:min_len]
             synth_segment = synth_audio[:min_len]
             
-            # SNR
             diff = original_segment - synth_segment
             signal_power = np.mean(original_segment ** 2)
             noise_power = np.mean(diff ** 2)
             snr = 10 * np.log10(signal_power / (noise_power + 1e-10))
             all_snr.append(snr)
             
-            # MCD
             try:
                 orig_mfcc = librosa.feature.mfcc(y=original_segment, sr=16000, n_mfcc=13)
                 synth_mfcc = librosa.feature.mfcc(y=synth_segment, sr=16000, n_mfcc=13)
@@ -258,7 +253,6 @@ def test_vocoder(num_samples: int = 20):
             except:
                 mcd = None
             
-            # Save samples
             if idx < 10:
                 write(os.path.join(TEST_OUTPUT_DIR, f"synth_{idx:04d}.wav"), 16000, (synth_audio * 32767).astype(np.int16))
                 write(os.path.join(TEST_OUTPUT_DIR, f"orig_{idx:04d}.wav"), 16000, (original_segment * 32767).astype(np.int16))
@@ -273,7 +267,6 @@ def test_vocoder(num_samples: int = 20):
             print(f"⚠️  Error: {e}")
             continue
     
-    # Aggregate
     results["aggregate_metrics"] = {
         "mean_snr_db": float(np.mean(all_snr)) if all_snr else None,
         "std_snr_db": float(np.std(all_snr)) if all_snr else None,
@@ -290,7 +283,6 @@ def test_vocoder(num_samples: int = 20):
     if results['aggregate_metrics']['mean_mcd']:
         print(f"  MCD: {results['aggregate_metrics']['mean_mcd']:.2f} (±{results['aggregate_metrics']['std_mcd']:.2f})")
     
-    # Save results
     with open(os.path.join(TEST_OUTPUT_DIR, "test_results.json"), 'w') as f:
         json.dump(results, f, indent=2)
     
@@ -303,7 +295,6 @@ def test_vocoder(num_samples: int = 20):
 # %%
 @app.local_entrypoint()
 def main(num_samples: int = 20):
-    """Test the trained vocoder."""
     print("🔬 Starting Vocoder Quality Test")
     
     results = test_vocoder.remote(num_samples=num_samples)

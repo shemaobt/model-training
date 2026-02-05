@@ -149,7 +149,6 @@ def validate_and_synthesize(
     generator_checkpoint_path: str = None,
     use_random_units: bool = False
 ):
-    """Validate acoustic units and optionally synthesize audio."""
     import torch
     import numpy as np
     import joblib
@@ -160,7 +159,6 @@ def validate_and_synthesize(
     
     os.makedirs(CHECKING_OUTPUT_DIR, exist_ok=True)
     
-    # Load K-Means model
     kmeans_path = os.path.join(OUTPUT_DIR, "portuguese_kmeans.pkl")
     if not os.path.exists(kmeans_path):
         print(f"❌ K-Means model not found. Run Phase 1 first!")
@@ -171,7 +169,6 @@ def validate_and_synthesize(
     num_units = kmeans.n_clusters
     print(f"✓ K-Means loaded: {num_units} acoustic units")
     
-    # Load Generator if checkpoint provided
     generator = None
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -205,7 +202,6 @@ def validate_and_synthesize(
         print(f"\n⚠️  No Generator checkpoint provided")
         print("   Will validate units only")
     
-    # Load unit sequences
     units_file = os.path.join(OUTPUT_DIR, "all_units_for_bpe.txt")
     
     if use_random_units:
@@ -233,7 +229,6 @@ def validate_and_synthesize(
         
         print(f"✓ Loaded {len(unit_sequences)} sequences")
     
-    # Validate units
     print(f"\n🔍 Validating units...")
     all_units_flat = [u for seq in unit_sequences for u in seq]
     unique_units = set(all_units_flat)
@@ -254,7 +249,6 @@ def validate_and_synthesize(
     print(f"  Unique: {validation_results['unit_stats']['unique_units']}/{num_units}")
     print(f"  Range: {validation_results['unit_stats']['unit_range']}")
     
-    # Synthesize if Generator available
     if generator is not None:
         print(f"\n🎵 Synthesizing audio...")
         
@@ -288,7 +282,6 @@ def validate_and_synthesize(
     else:
         print(f"\n⏭️  Skipping synthesis")
     
-    # Save results
     results_path = os.path.join(CHECKING_OUTPUT_DIR, "validation_results.json")
     with open(results_path, 'w') as f:
         json.dump(validation_results, f, indent=2)
@@ -304,7 +297,6 @@ def validate_and_synthesize(
 # %%
 @app.local_entrypoint()
 def main(num_samples: int = 10, generator_checkpoint: str = None, use_random: bool = False):
-    """Run validation and synthesis."""
     print("🚀 Starting Acoustic Units Validation")
     print("=" * 60)
     

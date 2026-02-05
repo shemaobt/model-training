@@ -75,25 +75,45 @@ audio_volume = modal.Volume.from_name(
 # %%
 image = (
     modal.Image.debian_slim()
-    .apt_install("ffmpeg")
+    .apt_install("ffmpeg", "libsndfile1")
     .pip_install(
         "torch>=2.0.0",
         "torchaudio>=2.0.0",
         "numpy<2",
-        "scipy",
-        "scikit-learn",
-        "joblib",
+        "scipy>=1.11.0",
+        "scikit-learn>=1.3.0",
+        "joblib>=1.3.0",
         "soundfile>=0.12.0",
-        "tqdm",
-        "tensorboard",
+        "tqdm>=4.66.0",
+        "tensorboard>=2.14.0",
     )
 )
 
 # %%
 AUDIO_MOUNT = "/mnt/audio_data"
-SEGMENTED_DIR = f"{AUDIO_MOUNT}/segmented_audio"
-OUTPUT_DIR = f"{AUDIO_MOUNT}/portuguese_units"
-VOCODER_DIR = f"{AUDIO_MOUNT}/vocoder_checkpoints"
+
+LANGUAGE_CONFIGS = {
+    "portuguese": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio",
+        "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
+        "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_checkpoints",
+        "corpus_file": "portuguese_corpus_timestamped.json",
+    },
+    "satere": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_satere",
+        "output_dir": f"{AUDIO_MOUNT}/satere_units",
+        "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_satere_checkpoints",
+        "corpus_file": "satere_corpus_timestamped.json",
+    },
+}
+
+import os as _os
+_LANGUAGE = _os.environ.get("TRAINING_LANGUAGE", "portuguese")
+_config = LANGUAGE_CONFIGS.get(_LANGUAGE, LANGUAGE_CONFIGS["portuguese"])
+
+SEGMENTED_DIR = _config["segmented_dir"]
+OUTPUT_DIR = _config["output_dir"]
+VOCODER_DIR = _config["vocoder_dir"]
 
 # %% [markdown]
 # ## Model Definitions
@@ -177,7 +197,6 @@ import torch
 import torch.nn as nn
 
 class MultiScaleDiscriminator(nn.Module):
-    """Multi-scale discriminator for audio quality assessment."""
     def __init__(self):
         super().__init__()
         
@@ -230,8 +249,6 @@ import os
 import json
 
 class UnitAudioDataset(Dataset):
-    """Dataset that pairs unit sequences with source audio."""
-    
     def __init__(self, corpus_path, audio_dir, segment_length=16000, 
                  hop_size=320, samples_per_epoch=10000):
         self.audio_dir = audio_dir
@@ -349,8 +366,8 @@ def train_vocoder(
     patience: int = 50,
     min_delta: float = 0.5,
     samples_per_epoch: int = 10000,
+    language: str = "portuguese",
 ):
-    """Train the vocoder using GAN training."""
     import torch
     import torch.nn as nn
     import torch.optim as optim
@@ -364,14 +381,19 @@ def train_vocoder(
     
     print("=" * 60)
     print("🎵 Vocoder Training")
+    print(f"Language: {language}")
     print("=" * 60)
+    
+    config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
+    segmented_dir = config["segmented_dir"]
+    output_dir = config["output_dir"]
+    vocoder_dir = config["vocoder_dir"]
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     
-    os.makedirs(VOCODER_DIR, exist_ok=True)
+    os.makedirs(vocoder_dir, exist_ok=True)
     
-    # Load models
     def load_module(code, name):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(code)
@@ -395,15 +417,15 @@ def train_vocoder(
     print(f"Generator: {sum(p.numel() for p in generator.parameters()):,} params")
     print(f"Discriminator: {sum(p.numel() for p in discriminator.parameters()):,} params")
     
-    # Load dataset
-    corpus_path = os.path.join(OUTPUT_DIR, "portuguese_corpus_timestamped.json")
+    corpus_file = config["corpus_file"]
+    corpus_path = os.path.join(output_dir, corpus_file)
     if not os.path.exists(corpus_path):
-        print(f"❌ Corpus not found. Run Phase 1 first!")
+        print(f"❌ Corpus not found at {corpus_path}. Run Phase 1 first!")
         return None
     
     dataset = UnitAudioDataset(
         corpus_path=corpus_path,
-        audio_dir=SEGMENTED_DIR,
+        audio_dir=segmented_dir,
         segment_length=16000,
         samples_per_epoch=samples_per_epoch,
     )
@@ -416,13 +438,11 @@ def train_vocoder(
         dataset, batch_size=batch_size, shuffle=True, num_workers=2, drop_last=True
     )
     
-    # Optimizers
     optimizer_g = optim.AdamW(generator.parameters(), lr=learning_rate, betas=(0.5, 0.9))
     optimizer_d = optim.AdamW(discriminator.parameters(), lr=learning_rate, betas=(0.5, 0.9))
     scheduler_g = optim.lr_scheduler.ExponentialLR(optimizer_g, gamma=0.999)
     scheduler_d = optim.lr_scheduler.ExponentialLR(optimizer_d, gamma=0.999)
     
-    # Resume
     start_epoch = 0
     if resume_from and os.path.exists(resume_from):
         print(f"📥 Resuming from: {resume_from}")
@@ -433,7 +453,6 @@ def train_vocoder(
         optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
         start_epoch = checkpoint.get('epoch', 0) + 1
     
-    # Loss functions
     def adversarial_loss(outputs, target_is_real):
         target = torch.ones_like(outputs) if target_is_real else torch.zeros_like(outputs)
         return nn.MSELoss()(outputs, target)
@@ -451,7 +470,6 @@ def train_vocoder(
         
         return nn.L1Loss()(mel_transform(fake_audio), mel_transform(real_audio))
     
-    # Training loop
     training_log = []
     best_mel_loss = float('inf')
     epochs_without_improvement = 0
@@ -469,7 +487,6 @@ def train_vocoder(
             real_audio = batch['audio'].to(device)
             units = batch['units'].to(device)
             
-            # Train Discriminator
             optimizer_d.zero_grad()
             with torch.no_grad():
                 fake_audio = generator(units)
@@ -486,7 +503,6 @@ def train_vocoder(
             d_loss.backward()
             optimizer_d.step()
             
-            # Train Generator
             optimizer_g.zero_grad()
             fake_audio = generator(units)
             fake_outputs = discriminator(fake_audio)
@@ -516,7 +532,6 @@ def train_vocoder(
         
         training_log.append({'epoch': epoch+1, 'g_loss': avg_g_loss, 'd_loss': avg_d_loss, 'mel_loss': avg_mel_loss})
         
-        # Early stopping
         if avg_mel_loss < best_mel_loss - min_delta:
             best_mel_loss = avg_mel_loss
             epochs_without_improvement = 0
@@ -529,9 +544,8 @@ def train_vocoder(
             print(f"\n🛑 Early stopping!")
             break
         
-        # Save checkpoint
         if (epoch + 1) % save_every == 0:
-            checkpoint_path = os.path.join(VOCODER_DIR, f"vocoder_epoch_{epoch+1:04d}.pt")
+            checkpoint_path = os.path.join(vocoder_dir, f"vocoder_epoch_{epoch+1:04d}.pt")
             torch.save({
                 'epoch': epoch,
                 'generator_state_dict': generator.state_dict(),
@@ -547,23 +561,21 @@ def train_vocoder(
                 'discriminator_state_dict': discriminator.state_dict(),
                 'optimizer_g_state_dict': optimizer_g.state_dict(),
                 'optimizer_d_state_dict': optimizer_d.state_dict(),
-            }, os.path.join(VOCODER_DIR, "vocoder_latest.pt"))
+            }, os.path.join(vocoder_dir, "vocoder_latest.pt"))
             
-            # Save sample
             generator.eval()
             with torch.no_grad():
                 sample_audio = generator(units[:1]).squeeze().cpu().numpy()
                 sample_audio = (sample_audio * 32767).astype(np.int16)
-                write(os.path.join(VOCODER_DIR, f"sample_epoch_{epoch+1:04d}.wav"), 16000, sample_audio)
+                write(os.path.join(vocoder_dir, f"sample_epoch_{epoch+1:04d}.wav"), 16000, sample_audio)
             generator.train()
             
             audio_volume.commit()
     
-    # Save final
     torch.save({'epoch': epochs, 'generator_state_dict': generator.state_dict(), 'training_log': training_log},
-               os.path.join(VOCODER_DIR, "vocoder_final.pt"))
+               os.path.join(vocoder_dir, "vocoder_final.pt"))
     
-    with open(os.path.join(VOCODER_DIR, "training_log.json"), 'w') as f:
+    with open(os.path.join(vocoder_dir, "training_log.json"), 'w') as f:
         json.dump(training_log, f, indent=2)
     
     audio_volume.commit()
@@ -585,17 +597,20 @@ def main(
     patience: int = 50,
     min_delta: float = 0.5,
     samples_per_epoch: int = 10000,
+    language: str = "portuguese",
 ):
-    """Train the vocoder model."""
     print("🎵 Starting Vocoder Training")
     print("=" * 60)
+    print(f"  Language: {language}")
     print(f"  Max epochs: {epochs}")
     print(f"  Batch size: {batch_size}")
     print(f"  Learning rate: {lr}")
     print(f"  Early stopping: patience={patience}")
     print("=" * 60)
     
-    resume_path = os.path.join(VOCODER_DIR, resume) if resume else None
+    config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
+    vocoder_dir = config["vocoder_dir"]
+    resume_path = os.path.join(vocoder_dir, resume) if resume else None
     
     result = train_vocoder.remote(
         epochs=epochs,
@@ -606,6 +621,7 @@ def main(
         patience=patience,
         min_delta=min_delta,
         samples_per_epoch=samples_per_epoch,
+        language=language,
     )
     
     if result:

@@ -73,12 +73,12 @@ image = (
         "torch>=2.0.0",
         "torchaudio>=2.0.0",
         "numpy<2",
-        "scipy",
-        "scikit-learn",
-        "joblib",
+        "scipy>=1.11.0",
+        "scikit-learn>=1.3.0",
+        "joblib>=1.3.0",
         "soundfile>=0.12.0",
-        "tqdm",
-        "tensorboard",
+        "tqdm>=4.66.0",
+        "tensorboard>=2.14.0",
         "librosa>=0.10.0",
     )
 )
@@ -307,8 +307,6 @@ import json
 import librosa
 
 class UnitAudioPitchDataset(Dataset):
-    """Dataset with unit sequences, audio, and pitch (F0)."""
-    
     def __init__(self, corpus_path, audio_dir, segment_length=32000,
                  hop_size=320, samples_per_epoch=10000, num_pitch_bins=32,
                  f0_min=50.0, f0_max=400.0):
@@ -342,7 +340,6 @@ class UnitAudioPitchDataset(Dataset):
         print(f"Loaded {len(self.samples)} samples ({missing} missing)")
     
     def _extract_pitch(self, audio, sr=16000):
-        """Extract pitch using librosa pyin."""
         try:
             f0, voiced, _ = librosa.pyin(
                 audio, fmin=self.f0_min, fmax=self.f0_max,
@@ -354,7 +351,6 @@ class UnitAudioPitchDataset(Dataset):
             return np.zeros(len(audio) // self.hop_size)
     
     def _quantize_pitch(self, f0):
-        """Quantize continuous F0 to bins."""
         bins = np.zeros_like(f0, dtype=np.int64)
         voiced = f0 > 0
         if np.any(voiced):
@@ -378,7 +374,6 @@ class UnitAudioPitchDataset(Dataset):
             
             units = sample['units']
             
-            # Align to unit boundaries
             max_unit_start = max(0, len(units) - self.unit_length)
             if max_unit_start > 0:
                 unit_start = np.random.randint(0, max_unit_start)
@@ -386,17 +381,14 @@ class UnitAudioPitchDataset(Dataset):
                 unit_start = 0
             audio_start = unit_start * self.hop_size
             
-            # Extract segments
             audio_seg = audio[audio_start:audio_start + self.segment_length]
             units_seg = units[unit_start:unit_start + self.unit_length]
             
-            # Pad if needed
             if len(audio_seg) < self.segment_length:
                 audio_seg = np.pad(audio_seg, (0, self.segment_length - len(audio_seg)))
             if len(units_seg) < self.unit_length:
                 units_seg = units_seg + [0] * (self.unit_length - len(units_seg))
             
-            # Extract and quantize pitch
             f0 = self._extract_pitch(audio_seg)
             if len(f0) < self.unit_length:
                 f0 = np.pad(f0, (0, self.unit_length - len(f0)))
@@ -431,7 +423,6 @@ import torchaudio.transforms as T
 
 def mel_spectrogram_loss(real, fake, sample_rate=16000, n_fft=1024, 
                          hop_length=256, n_mels=80):
-    """L1 loss on mel spectrograms."""
     min_len = min(real.shape[-1], fake.shape[-1])
     real, fake = real[..., :min_len], fake[..., :min_len]
     mel = T.MelSpectrogram(sample_rate, n_fft, hop_length=hop_length, n_mels=n_mels)
@@ -440,7 +431,6 @@ def mel_spectrogram_loss(real, fake, sample_rate=16000, n_fft=1024,
 
 def stft_loss(real, fake, fft_sizes=[512, 1024, 2048], hop_sizes=[50, 120, 240],
               win_sizes=[240, 600, 1200]):
-    """Multi-resolution STFT loss (spectral convergence + log magnitude)."""
     min_len = min(real.shape[-1], fake.shape[-1])
     real, fake = real[..., :min_len], fake[..., :min_len]
     
@@ -465,11 +455,9 @@ def stft_loss(real, fake, fft_sizes=[512, 1024, 2048], hop_sizes=[50, 120, 240],
     return (sc_loss + mag_loss) / len(fft_sizes)
 
 def feature_matching_loss(real_features, fake_features):
-    """L1 loss on discriminator features with size alignment."""
     loss = 0.0
     for rf_list, ff_list in zip(real_features, fake_features):
         for rf, ff in zip(rf_list, ff_list):
-            # Align sizes - take minimum length along each dimension
             min_sizes = [min(rf.size(i), ff.size(i)) for i in range(rf.dim())]
             rf_aligned = rf
             ff_aligned = ff
@@ -520,7 +508,6 @@ def train_vocoder_v2(
     lambda_stft: float = 2.0,
     lambda_fm: float = 2.0,
 ):
-    """Train the V2 vocoder with all improvements."""
     import torch
     import torch.optim as optim
     from torch.utils.data import DataLoader
@@ -544,7 +531,6 @@ def train_vocoder_v2(
     
     os.makedirs(VOCODER_DIR, exist_ok=True)
     
-    # Load modules
     def load_module(code, name):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(code)
@@ -563,7 +549,6 @@ def train_vocoder_v2(
     CombinedDiscriminatorV2 = disc_module.CombinedDiscriminatorV2
     UnitAudioPitchDataset = data_module.UnitAudioPitchDataset
     
-    # Initialize models
     generator = GeneratorV2(num_units=100, num_pitch_bins=32).to(device)
     discriminator = CombinedDiscriminatorV2().to(device)
     
@@ -572,7 +557,6 @@ def train_vocoder_v2(
     print(f"Generator: {g_params:,} params")
     print(f"Discriminator: {d_params:,} params")
     
-    # Load dataset
     corpus_path = os.path.join(OUTPUT_DIR, "portuguese_corpus_timestamped.json")
     if not os.path.exists(corpus_path):
         print(f"❌ Corpus not found at {corpus_path}")
@@ -603,15 +587,12 @@ def train_vocoder_v2(
         num_workers=0, drop_last=True, pin_memory=True
     )
     
-    # Optimizers with separate learning rates
     optimizer_g = optim.AdamW(generator.parameters(), lr=learning_rate_g, betas=(0.8, 0.99))
     optimizer_d = optim.AdamW(discriminator.parameters(), lr=learning_rate_d, betas=(0.8, 0.99))
     
-    # Schedulers
     scheduler_g = optim.lr_scheduler.ExponentialLR(optimizer_g, gamma=0.999)
     scheduler_d = optim.lr_scheduler.ExponentialLR(optimizer_d, gamma=0.999)
     
-    # Resume
     start_epoch = 0
     best_loss = float('inf')
     epochs_without_improvement = 0
@@ -626,7 +607,6 @@ def train_vocoder_v2(
         start_epoch = ckpt.get('epoch', 0) + 1
         best_loss = ckpt.get('best_loss', float('inf'))
     
-    # Training loop
     training_log = []
     
     for epoch in range(start_epoch, epochs):
@@ -645,13 +625,11 @@ def train_vocoder_v2(
             units = batch['units'].to(device)
             pitch = batch['pitch'].to(device)
             
-            # ============ Train Discriminator ============
             optimizer_d.zero_grad()
             
             with torch.no_grad():
                 fake_audio = generator(units, pitch)
             
-            # Align fake audio length to real audio length
             min_len = min(real_audio.size(-1), fake_audio.size(-1))
             real_audio_aligned = real_audio[..., :min_len]
             fake_audio_aligned = fake_audio[..., :min_len]
@@ -664,12 +642,10 @@ def train_vocoder_v2(
             d_loss.backward()
             optimizer_d.step()
             
-            # ============ Train Generator ============
             optimizer_g.zero_grad()
             
             fake_audio = generator(units, pitch)
             
-            # Align fake audio length to real audio length
             min_len = min(real_audio.size(-1), fake_audio.size(-1))
             real_audio_aligned = real_audio[..., :min_len]
             fake_audio_aligned = fake_audio[..., :min_len]
@@ -677,7 +653,6 @@ def train_vocoder_v2(
             fake_scores, fake_features = discriminator(fake_audio_aligned)
             _, real_features = discriminator(real_audio_aligned)
             
-            # Losses (use aligned audio)
             mel_loss = loss_module.mel_spectrogram_loss(real_audio_aligned, fake_audio_aligned)
             stft_loss = loss_module.stft_loss(real_audio_aligned, fake_audio_aligned)
             fm_loss = loss_module.feature_matching_loss(real_features, fake_features)
@@ -734,7 +709,7 @@ def train_vocoder_v2(
             epochs_without_improvement = 0
             print(f"  ✓ New best: {best_loss:.2f}")
             
-            # Save best model
+            # Save best model and commit immediately so canceled runs keep it
             torch.save({
                 'epoch': epoch,
                 'generator_state_dict': generator.state_dict(),
@@ -743,6 +718,7 @@ def train_vocoder_v2(
                 'optimizer_d_state_dict': optimizer_d.state_dict(),
                 'best_loss': best_loss,
             }, os.path.join(VOCODER_DIR, "v2_best.pt"))
+            audio_volume.commit()
         else:
             epochs_without_improvement += 1
             print(f"  ⚠️  No improvement: {epochs_without_improvement}/{patience}")
@@ -829,12 +805,6 @@ def main(
     lambda_stft: float = 2.0,
     lambda_fm: float = 2.0,
 ):
-    """Train the V2 vocoder model.
-    
-    Args:
-        language: Language to train on ('portuguese' or 'satere')
-    """
-    # Get language-specific configuration
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     vocoder_dir = config["vocoder_dir"]
     
