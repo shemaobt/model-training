@@ -1,33 +1,11 @@
-"""
-Upload locally segmented audio files to Modal volume - Generic for any language
-
-Supports multiple languages with separate Modal directories.
-
-Usage:
-    # Upload Portuguese segments
-    python upload_to_modal.py --language portuguese
-    
-    # Upload Sateré segments
-    python upload_to_modal.py --language satere
-    
-    # Custom directories
-    python upload_to_modal.py --local /path/to/segments --remote /mnt/audio_data/custom_segments
-"""
-
 import modal
 import os
 import argparse
 from tqdm import tqdm
 
 
-# ============================================================================
-# Configuration
-# ============================================================================
-
-# Base directory
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Predefined language configurations
 LANGUAGE_CONFIGS = {
     "portuguese": {
         "local_dir": os.path.join(BASE_DIR, "local_segments"),
@@ -41,13 +19,7 @@ LANGUAGE_CONFIGS = {
     },
 }
 
-# Modal configuration
 AUDIO_MOUNT = "/mnt/audio_data"
-
-
-# ============================================================================
-# Modal Setup
-# ============================================================================
 
 app = modal.App("bible-audio-training")
 
@@ -58,10 +30,6 @@ audio_volume = modal.Volume.from_name(
 
 image = modal.Image.debian_slim().pip_install("tqdm")
 
-
-# ============================================================================
-# Modal Functions
-# ============================================================================
 
 @app.function(
     image=image,
@@ -110,10 +78,6 @@ def upload_segment_batch(file_data_list: list, remote_dir: str, batch_num: int, 
     
     return uploaded, errors
 
-
-# ============================================================================
-# Local Entrypoint
-# ============================================================================
 
 @app.local_entrypoint()
 def main(

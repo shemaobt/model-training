@@ -1,20 +1,14 @@
-"""
-Simple script to count Bible audio files and calculate total duration
-Run with: python3 count_audio_duration.py
-"""
-
 import os
+import argparse
 from pathlib import Path
 import subprocess
 from tqdm import tqdm
 
-# Local directories
-LOCAL_ANTIGO_TESTAMENTO = "/Users/joao/Desktop/work/shema/shemaobt/scripts/Antigo_Testamento_COMPLETO"
-LOCAL_NOVO_TESTAMENTO = "/Users/joao/Desktop/work/shema/shemaobt/scripts/NOVO_TESTAMENTO_COMPLETO"
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def get_audio_duration(file_path):
-    """Get duration of audio file using ffprobe"""
     try:
         cmd = [
             "ffprobe", "-v", "error", "-show_entries",
@@ -29,44 +23,78 @@ def get_audio_duration(file_path):
         return None
 
 
+LANGUAGE_CONFIGS = {
+    "portuguese": {
+        "input_dirs": [
+            os.path.join(BASE_DIR, "audio_data", "raw_audio"),
+        ],
+    },
+    "satere": {
+        "input_dirs": [
+            os.path.join(BASE_DIR, "audio_data", "raw_audio_satere"),
+        ],
+    },
+}
+
+
+def collect_audio_files(input_dirs, extensions=('.mp3', '.wav', '.flac')):
+    audio_files = []
+    for directory in input_dirs:
+        if not os.path.exists(directory):
+            print(f"⚠️  Directory not found: {directory}")
+            continue
+        for root, dirs, files in os.walk(directory):
+            for f in files:
+                if f.lower().endswith(extensions):
+                    audio_files.append(os.path.join(root, f))
+    return sorted(audio_files)
+
+
 def main():
-    print("=" * 60)
-    print("📊 Bible Audio File Counter & Duration Calculator")
-    print("=" * 60)
+    parser = argparse.ArgumentParser(
+        description="Count audio files and calculate total duration"
+    )
+    parser.add_argument(
+        "--language", "-l",
+        type=str,
+        default="portuguese",
+        help=f"Language preset: {', '.join(LANGUAGE_CONFIGS.keys())} (default: portuguese)"
+    )
+    parser.add_argument(
+        "--input", "-i",
+        type=str,
+        nargs="+",
+        help="Custom input directory/directories (overrides language preset)"
+    )
     
-    # Collect all MP3 files
-    mp3_files = []
+    args = parser.parse_args()
     
-    print("\n📁 Scanning directories...")
-    
-    # Antigo Testamento
-    if os.path.exists(LOCAL_ANTIGO_TESTAMENTO):
-        for root, dirs, files in os.walk(LOCAL_ANTIGO_TESTAMENTO):
-            for f in files:
-                if f.endswith('.mp3'):
-                    mp3_files.append(os.path.join(root, f))
-        print(f"  ✓ Antigo Testamento: Found files")
+    if args.input:
+        input_dirs = args.input
+    elif args.language in LANGUAGE_CONFIGS:
+        input_dirs = LANGUAGE_CONFIGS[args.language]["input_dirs"]
     else:
-        print(f"  ⚠️  Antigo Testamento directory not found")
-    
-    # Novo Testamento
-    if os.path.exists(LOCAL_NOVO_TESTAMENTO):
-        for root, dirs, files in os.walk(LOCAL_NOVO_TESTAMENTO):
-            for f in files:
-                if f.endswith('.mp3'):
-                    mp3_files.append(os.path.join(root, f))
-        print(f"  ✓ Novo Testamento: Found files")
-    else:
-        print(f"  ⚠️  Novo Testamento directory not found")
-    
-    total_files = len(mp3_files)
-    print(f"\n📊 Total MP3 files found: {total_files}")
-    
-    if total_files == 0:
-        print("❌ No MP3 files found!")
+        print(f"❌ Unknown language: {args.language}")
+        print(f"   Available: {', '.join(LANGUAGE_CONFIGS.keys())}")
         return
     
-    # Calculate total duration
+    print("=" * 60)
+    print(f"📊 Audio File Counter & Duration Calculator: {args.language.upper()}")
+    print("=" * 60)
+    
+    print("\n📁 Scanning directories...")
+    for d in input_dirs:
+        exists = "✓" if os.path.exists(d) else "✗"
+        print(f"   {exists} {d}")
+    
+    audio_files = collect_audio_files(input_dirs)
+    total_files = len(audio_files)
+    print(f"\n📊 Total audio files found: {total_files}")
+    
+    if total_files == 0:
+        print("❌ No audio files found!")
+        return
+    
     print(f"\n⏱️  Calculating total duration...")
     print("   (This may take a few minutes for large files)")
     
@@ -74,21 +102,19 @@ def main():
     successful = 0
     failed = 0
     
-    for mp3_path in tqdm(mp3_files, desc="Processing files"):
-        duration = get_audio_duration(mp3_path)
+    for audio_path in tqdm(audio_files, desc="Processing files"):
+        duration = get_audio_duration(audio_path)
         if duration is not None:
             total_seconds += duration
             successful += 1
         else:
             failed += 1
     
-    # Convert to hours and minutes
     total_hours = int(total_seconds // 3600)
     remaining_seconds = total_seconds % 3600
     total_minutes = int(remaining_seconds // 60)
     remaining_secs = int(remaining_seconds % 60)
     
-    # Display results
     print("\n" + "=" * 60)
     print("📊 RESULTS")
     print("=" * 60)
@@ -102,7 +128,6 @@ def main():
     print(f"   ({total_seconds:.1f} seconds total)")
     print(f"   ({total_seconds / 3600:.2f} hours)")
     
-    # Calculate average
     if successful > 0:
         avg_seconds = total_seconds / successful
         avg_minutes = avg_seconds / 60

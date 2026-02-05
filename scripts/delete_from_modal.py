@@ -1,8 +1,3 @@
-"""
-Delete segmented audio files from Modal volume
-Use with caution - this will delete all segments!
-"""
-
 import modal
 import os
 
@@ -31,7 +26,6 @@ image = (
     timeout=600,  # 10 minutes
 )
 def delete_segmented_audio():
-    """Delete all segmented audio files from Modal volume"""
     deleted_count = 0
     total_size = 0
     
@@ -83,7 +77,6 @@ def delete_segmented_audio():
 
 @app.local_entrypoint()
 def main():
-    """Delete segmented audio files from Modal volume"""
     print("=" * 60)
     print("🗑️  Delete Segmented Audio Files from Modal Volume")
     print("=" * 60)
