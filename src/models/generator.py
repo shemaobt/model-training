@@ -49,6 +49,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.constants import NUM_ACOUSTIC_UNITS, UNIT_EMBED_DIM, HOP_SIZE, LEAKY_RELU_SLOPE
 
 
 # %%
@@ -70,12 +71,12 @@ class Generator(nn.Module):
         audio: Waveform [batch_size, sequence_length * 320]
     """
     
-    def __init__(self, num_units: int = 100, embed_dim: int = 256):
+    def __init__(self, num_units: int = NUM_ACOUSTIC_UNITS, embed_dim: int = UNIT_EMBED_DIM):
         super().__init__()
         
         self.num_units = num_units
         self.embed_dim = embed_dim
-        self.upsample_factor = 320  # 5 * 4 * 4 * 4
+        self.upsample_factor = HOP_SIZE  # 5 * 4 * 4 * 4 = 320
         
         self.unit_embed = nn.Embedding(num_units, embed_dim)
         self.pre_conv = nn.Conv1d(embed_dim, 512, kernel_size=7, padding=3)
@@ -97,15 +98,15 @@ class Generator(nn.Module):
         padding = (kernel - stride) // 2
         return nn.Sequential(
             nn.ConvTranspose1d(in_ch, out_ch, kernel, stride=stride, padding=padding),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(out_ch, out_ch, kernel_size=7, padding=3),  # Reduce artifacts
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
         )
     
     def _make_res_block(self, channels: int) -> nn.Sequential:
         return nn.Sequential(
             nn.Conv1d(channels, channels, kernel_size=3, padding=1),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(channels, channels, kernel_size=3, padding=1),
         )
         
@@ -113,13 +114,13 @@ class Generator(nn.Module):
         x = self.unit_embed(x)
         x = x.transpose(1, 2)
         x = self.pre_conv(x)
-        x = F.leaky_relu(x, 0.1)
+        x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
         
         for upsample in self.upsamples:
             x = upsample(x)
         
         for res_block in self.res_blocks:
-            x = x + res_block(x) * 0.1
+            x = x + res_block(x) * LEAKY_RELU_SLOPE
         
         x = self.post_conv(x)
         x = torch.tanh(x)
@@ -144,12 +145,12 @@ class Generator(nn.Module):
 # %%
 if __name__ == "__main__":
     # Test the generator
-    generator = Generator(num_units=100)
+    generator = Generator(num_units=NUM_ACOUSTIC_UNITS)
     print(f"Generator parameters: {sum(p.numel() for p in generator.parameters()):,}")
     
     # Test forward pass
-    units = torch.randint(0, 100, (2, 50))  # 2 sequences of 50 units
+    units = torch.randint(0, NUM_ACOUSTIC_UNITS, (2, 50))  # 2 sequences of 50 units
     audio = generator(units)
     print(f"Input shape: {units.shape}")
     print(f"Output shape: {audio.shape}")
-    print(f"Expected output length: {50 * 320} = {50 * 320}")
+    print(f"Expected output length: {50 * HOP_SIZE} = {50 * HOP_SIZE}")

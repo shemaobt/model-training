@@ -44,6 +44,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import List
+from src.constants import LEAKY_RELU_SLOPE, MPD_PERIODS
 
 
 # %%
@@ -75,15 +76,15 @@ class MultiScaleDiscriminator(nn.Module):
     def _make_discriminator(self) -> nn.Sequential:
         return nn.Sequential(
             nn.Conv1d(1, 16, kernel_size=15, stride=1, padding=7),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(16, 64, kernel_size=41, stride=4, padding=20, groups=4),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(64, 256, kernel_size=41, stride=4, padding=20, groups=16),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(256, 512, kernel_size=41, stride=4, padding=20, groups=16),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(512, 512, kernel_size=5, stride=1, padding=2),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(512, 1, kernel_size=3, stride=1, padding=1),
         )
         
@@ -120,7 +121,7 @@ class MultiPeriodDiscriminator(nn.Module):
         super().__init__()
         
         if periods is None:
-            periods = [2, 3, 5, 7, 11]
+            periods = list(MPD_PERIODS)
         
         self.periods = periods
         self.discriminators = nn.ModuleList([
@@ -130,13 +131,13 @@ class MultiPeriodDiscriminator(nn.Module):
     def _make_period_discriminator(self) -> nn.Sequential:
         return nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=(5, 1), stride=(3, 1), padding=(2, 0)),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv2d(32, 128, kernel_size=(5, 1), stride=(3, 1), padding=(2, 0)),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv2d(128, 256, kernel_size=(5, 1), stride=(3, 1), padding=(2, 0)),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv2d(256, 512, kernel_size=(5, 1), stride=(3, 1), padding=(2, 0)),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv2d(512, 1, kernel_size=(3, 1), padding=(1, 0)),
         )
     

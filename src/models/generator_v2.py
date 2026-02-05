@@ -57,6 +57,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm, remove_weight_norm
 from typing import List, Optional
+from src.constants import (
+    NUM_ACOUSTIC_UNITS,
+    NUM_PITCH_BINS,
+    UNIT_EMBED_DIM,
+    PITCH_EMBED_DIM,
+    UPSAMPLE_INITIAL_CHANNEL,
+    UPSAMPLE_RATES,
+    UPSAMPLE_KERNEL_SIZES,
+    RESBLOCK_KERNEL_SIZES,
+    RESBLOCK_DILATIONS,
+    LEAKY_RELU_SLOPE,
+    SAMPLE_RATE,
+    HOP_SIZE,
+    F0_MIN,
+    F0_MAX,
+    PITCH_UNVOICED_BIN,
+)
 
 
 # %%
@@ -92,9 +109,9 @@ class ResBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for conv1, conv2 in zip(self.convs1, self.convs2):
             residual = x
-            x = F.leaky_relu(x, 0.1)
+            x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
             x = conv1(x)
-            x = F.leaky_relu(x, 0.1)
+            x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
             x = conv2(x)
             x = x + residual
         return x
@@ -173,29 +190,29 @@ class GeneratorV2(nn.Module):
     
     def __init__(
         self,
-        num_units: int = 100,
-        num_pitch_bins: int = 32,
-        unit_embed_dim: int = 256,
-        pitch_embed_dim: int = 64,
+        num_units: int = NUM_ACOUSTIC_UNITS,
+        num_pitch_bins: int = NUM_PITCH_BINS,
+        unit_embed_dim: int = UNIT_EMBED_DIM,
+        pitch_embed_dim: int = PITCH_EMBED_DIM,
         upsample_rates: List[int] = None,
         upsample_kernel_sizes: List[int] = None,
-        upsample_initial_channel: int = 512,
+        upsample_initial_channel: int = UPSAMPLE_INITIAL_CHANNEL,
         resblock_kernel_sizes: List[int] = None,
         resblock_dilation_sizes: List[List[List[int]]] = None,
     ):
         super().__init__()
         
         if upsample_rates is None:
-            upsample_rates = [5, 4, 4, 4]  # 5 * 4 * 4 * 4 = 320
+            upsample_rates = list(UPSAMPLE_RATES)
         if upsample_kernel_sizes is None:
-            upsample_kernel_sizes = [10, 8, 8, 8]
+            upsample_kernel_sizes = list(UPSAMPLE_KERNEL_SIZES)
         if resblock_kernel_sizes is None:
-            resblock_kernel_sizes = [3, 7, 11]
+            resblock_kernel_sizes = list(RESBLOCK_KERNEL_SIZES)
         if resblock_dilation_sizes is None:
             resblock_dilation_sizes = [
-                [[1, 1], [3, 1], [5, 1]],
-                [[1, 1], [3, 1], [5, 1]],
-                [[1, 1], [3, 1], [5, 1]],
+                RESBLOCK_DILATIONS,
+                RESBLOCK_DILATIONS,
+                RESBLOCK_DILATIONS,
             ]
         
         self.num_units = num_units
@@ -258,11 +275,11 @@ class GeneratorV2(nn.Module):
         x = self.pre_conv(x)
         
         for up, mrf in zip(self.ups, self.mrfs):
-            x = F.leaky_relu(x, 0.1)
+            x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
             x = up(x)
             x = mrf(x)
         
-        x = F.leaky_relu(x, 0.1)
+        x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
         x = self.post_conv(x)
         x = torch.tanh(x)
         
@@ -283,9 +300,9 @@ class GeneratorV2(nn.Module):
 # These functions help extract and quantize pitch (F0) from audio.
 
 # %%
-def extract_pitch(audio: torch.Tensor, sample_rate: int = 16000, 
-                  hop_length: int = 320, f0_min: float = 50.0, 
-                  f0_max: float = 400.0) -> torch.Tensor:
+def extract_pitch(audio: torch.Tensor, sample_rate: int = SAMPLE_RATE, 
+                  hop_length: int = HOP_SIZE, f0_min: float = F0_MIN, 
+                  f0_max: float = F0_MAX) -> torch.Tensor:
     """
     Extract pitch (F0) from audio using a simple autocorrelation method.
     
@@ -310,8 +327,8 @@ def extract_pitch(audio: torch.Tensor, sample_rate: int = 16000,
     return torch.zeros(batch_size, num_frames, device=audio.device)
 
 
-def quantize_pitch(pitch: torch.Tensor, num_bins: int = 32,
-                   f0_min: float = 50.0, f0_max: float = 400.0) -> torch.Tensor:
+def quantize_pitch(pitch: torch.Tensor, num_bins: int = NUM_PITCH_BINS,
+                   f0_min: float = F0_MIN, f0_max: float = F0_MAX) -> torch.Tensor:
     """
     Quantize continuous pitch values to discrete bins.
     

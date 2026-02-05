@@ -54,6 +54,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import spectral_norm, weight_norm
 from typing import List, Tuple, Optional
+from src.constants import LEAKY_RELU_SLOPE, MPD_PERIODS
 
 
 # %%
@@ -99,7 +100,7 @@ class PeriodDiscriminator(nn.Module):
         
         for conv in self.convs:
             x = conv(x)
-            x = F.leaky_relu(x, 0.1)
+            x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
             features.append(x)
         
         x = self.conv_post(x)
@@ -122,7 +123,7 @@ class MultiPeriodDiscriminatorV2(nn.Module):
         super().__init__()
         
         if periods is None:
-            periods = [2, 3, 5, 7, 11]
+            periods = list(MPD_PERIODS)
         
         self.discriminators = nn.ModuleList([
             PeriodDiscriminator(p, use_spectral_norm) for p in periods
@@ -172,7 +173,7 @@ class ScaleDiscriminator(nn.Module):
         
         for conv in self.convs:
             x = conv(x)
-            x = F.leaky_relu(x, 0.1)
+            x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
             features.append(x)
         
         x = self.conv_post(x)
