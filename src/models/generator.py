@@ -77,13 +77,9 @@ class Generator(nn.Module):
         self.embed_dim = embed_dim
         self.upsample_factor = 320  # 5 * 4 * 4 * 4
         
-        # Unit embedding
         self.unit_embed = nn.Embedding(num_units, embed_dim)
-        
-        # Pre-processing convolution
         self.pre_conv = nn.Conv1d(embed_dim, 512, kernel_size=7, padding=3)
         
-        # Upsampling blocks: 5 × 4 × 4 × 4 = 320x total
         self.upsamples = nn.ModuleList([
             self._make_upsample_block(512, 256, kernel=10, stride=5),
             self._make_upsample_block(256, 128, kernel=8, stride=4),
@@ -91,16 +87,13 @@ class Generator(nn.Module):
             self._make_upsample_block(64, 32, kernel=8, stride=4),
         ])
         
-        # Residual blocks for refinement
         self.res_blocks = nn.ModuleList([
             self._make_res_block(32) for _ in range(3)
         ])
         
-        # Post-processing convolution
         self.post_conv = nn.Conv1d(32, 1, kernel_size=7, padding=3)
         
     def _make_upsample_block(self, in_ch: int, out_ch: int, kernel: int, stride: int) -> nn.Sequential:
-        """Create an upsampling block with transposed convolution."""
         padding = (kernel - stride) // 2
         return nn.Sequential(
             nn.ConvTranspose1d(in_ch, out_ch, kernel, stride=stride, padding=padding),
@@ -110,7 +103,6 @@ class Generator(nn.Module):
         )
     
     def _make_res_block(self, channels: int) -> nn.Sequential:
-        """Create a residual block for detail refinement."""
         return nn.Sequential(
             nn.Conv1d(channels, channels, kernel_size=3, padding=1),
             nn.LeakyReLU(0.1),
@@ -118,38 +110,20 @@ class Generator(nn.Module):
         )
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass.
-        
-        Args:
-            x: Unit indices [batch_size, sequence_length]
-            
-        Returns:
-            audio: Waveform [batch_size, sequence_length * 320]
-        """
-        # Embed units: [B, T] -> [B, T, embed_dim]
         x = self.unit_embed(x)
-        
-        # Transpose for conv1d: [B, T, C] -> [B, C, T]
         x = x.transpose(1, 2)
-        
-        # Pre-processing
         x = self.pre_conv(x)
         x = F.leaky_relu(x, 0.1)
         
-        # Upsampling (320x total)
         for upsample in self.upsamples:
             x = upsample(x)
         
-        # Residual refinement
         for res_block in self.res_blocks:
             x = x + res_block(x) * 0.1
         
-        # Post-processing
         x = self.post_conv(x)
         x = torch.tanh(x)
         
-        # Remove channel dimension: [B, 1, T*320] -> [B, T*320]
         return x.squeeze(1)
 
 
