@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
@@ -26,7 +25,8 @@ image = (
 )
 
 MODEL_NAME = "facebook/wav2vec2-large-xlsr-53"
-LAYER = 14
+XLSR_LAYER = 14
+SAMPLE_RATE = 16000
 KMEANS_PATH = f"{AUDIO_MOUNT}/portuguese_units/portuguese_kmeans.pkl"
 
 
@@ -55,11 +55,11 @@ def infer_acoustemes(
         data, rate = sf.read(path, dtype="float32")
         if data.ndim > 1:
             data = data.mean(axis=1)
-        if rate != 16000:
+        if rate != SAMPLE_RATE:
             t = torch.from_numpy(data).unsqueeze(0).float()
-            t = torchaudio.transforms.Resample(rate, 16000)(t)
+            t = torchaudio.transforms.Resample(rate, SAMPLE_RATE)(t)
             data = t.squeeze().numpy()
-        return data, 16000
+        return data, SAMPLE_RATE
 
     if audio_path_on_volume:
         path = os.path.join(AUDIO_MOUNT, audio_path_on_volume)
@@ -80,17 +80,17 @@ def infer_acoustemes(
         raise ValueError("Pass audio_path_on_volume or (audio_bytes, audio_filename)")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    duration = len(waveform) / 16000
+    duration = len(waveform) / SAMPLE_RATE
 
     extractor = Wav2Vec2FeatureExtractor.from_pretrained(MODEL_NAME)
     model = Wav2Vec2Model.from_pretrained(MODEL_NAME).to(device)
     model.eval()
 
-    inputs = extractor(waveform, return_tensors="pt", sampling_rate=16000)
+    inputs = extractor(waveform, return_tensors="pt", sampling_rate=SAMPLE_RATE)
     inputs = inputs.input_values.to(device)
     with torch.no_grad():
         out = model(inputs, output_hidden_states=True)
-    feats = out.hidden_states[LAYER].squeeze(0).cpu().numpy()
+    feats = out.hidden_states[XLSR_LAYER].squeeze(0).cpu().numpy()
     timestamps = np.linspace(0, duration, feats.shape[0]).tolist()
 
     if not os.path.exists(KMEANS_PATH):

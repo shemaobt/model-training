@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import librosa
 import numpy as np
@@ -7,8 +8,18 @@ import subprocess
 import shutil
 from tqdm import tqdm
 
-
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
+
+from src.constants import (
+    SAMPLE_RATE,
+    SILENCE_THRESHOLD_DB,
+    MIN_SILENCE_DURATION,
+    MIN_SEGMENT_DURATION,
+    MAX_SEGMENT_DURATION,
+    FRAME_DURATION,
+    HOP_DURATION,
+)
 
 LANGUAGE_CONFIGS = {
     "portuguese": {
@@ -25,11 +36,7 @@ LANGUAGE_CONFIGS = {
     },
 }
 
-SILENCE_THRESHOLD = -40
-MIN_SILENCE_DURATION = 0.5
-MIN_SEGMENT_DURATION = 2.0
-MAX_SEGMENT_DURATION = 120.0
-SAMPLE_RATE = 16000
+SILENCE_THRESHOLD = SILENCE_THRESHOLD_DB
 
 
 def convert_mp3_to_wav(mp3_path: str, wav_path: str) -> bool:
@@ -51,8 +58,8 @@ def segment_audio_file(wav_path: str, output_dir: str) -> int:
         audio, sr = librosa.load(wav_path, sr=SAMPLE_RATE, mono=True)
         duration = len(audio) / sr
         
-        frame_length = int(0.025 * sr)
-        hop_length = int(0.010 * sr)
+        frame_length = int(FRAME_DURATION * sr)
+        hop_length = int(HOP_DURATION * sr)
         
         rms = librosa.feature.rms(y=audio, frame_length=frame_length, hop_length=hop_length)[0]
         rms_db = librosa.power_to_db(rms**2, ref=np.max)

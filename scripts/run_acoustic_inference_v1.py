@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -7,10 +6,11 @@ import os
 import sys
 from pathlib import Path
 
-# Add project root for imports if needed
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from src.constants import SAMPLE_RATE, XLSR_LAYER
 
 
 def load_audio_16k(path: str):
@@ -24,18 +24,18 @@ def load_audio_16k(path: str):
     data, rate = sf.read(path, dtype="float32")
     if data.ndim > 1:
         data = data.mean(axis=1)
-    if rate != 16000:
+    if rate != SAMPLE_RATE:
         t = torch.from_numpy(data).unsqueeze(0).float()
-        t = torchaudio.transforms.Resample(rate, 16000)(t)
+        t = torchaudio.transforms.Resample(rate, SAMPLE_RATE)(t)
         data = t.squeeze().numpy()
-    return data, 16000
+    return data, SAMPLE_RATE
 
 
 def extract_features(waveform, model, extractor, layer: int, device):
     import numpy as np
     import torch
-    duration = len(waveform) / 16000
-    inputs = extractor(waveform, return_tensors="pt", sampling_rate=16000)
+    duration = len(waveform) / SAMPLE_RATE
+    inputs = extractor(waveform, return_tensors="pt", sampling_rate=SAMPLE_RATE)
     inputs = inputs.input_values.to(device)
     with torch.no_grad():
         out = model(inputs, output_hidden_states=True)
@@ -119,7 +119,7 @@ def main():
 
     device = torch.device("cpu" if args.cpu or not torch.cuda.is_available() else "cuda")
     MODEL_NAME = "facebook/wav2vec2-large-xlsr-53"
-    LAYER = 14
+    LAYER = XLSR_LAYER
 
     print("Loading XLSR-53...")
     extractor = Wav2Vec2FeatureExtractor.from_pretrained(MODEL_NAME)
