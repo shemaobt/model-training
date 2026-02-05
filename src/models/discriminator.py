@@ -44,6 +44,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import List
+from src.constants import LEAKY_RELU_SLOPE, MPD_PERIODS
 
 
 # %%
@@ -64,52 +65,30 @@ class MultiScaleDiscriminator(nn.Module):
     def __init__(self):
         super().__init__()
         
-        # Three discriminators for different scales
         self.discriminators = nn.ModuleList([
             self._make_discriminator(),
             self._make_discriminator(),
             self._make_discriminator(),
         ])
         
-        # Downsampling for multi-scale
         self.downsample = nn.AvgPool1d(kernel_size=4, stride=2, padding=1)
         
     def _make_discriminator(self) -> nn.Sequential:
-        """Create a single discriminator network."""
         return nn.Sequential(
-            # Initial convolution
             nn.Conv1d(1, 16, kernel_size=15, stride=1, padding=7),
-            nn.LeakyReLU(0.1),
-            
-            # Strided convolutions (downsample)
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(16, 64, kernel_size=41, stride=4, padding=20, groups=4),
-            nn.LeakyReLU(0.1),
-            
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(64, 256, kernel_size=41, stride=4, padding=20, groups=16),
-            nn.LeakyReLU(0.1),
-            
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(256, 512, kernel_size=41, stride=4, padding=20, groups=16),
-            nn.LeakyReLU(0.1),
-            
-            # Final layers
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(512, 512, kernel_size=5, stride=1, padding=2),
-            nn.LeakyReLU(0.1),
-            
-            # Output score
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv1d(512, 1, kernel_size=3, stride=1, padding=1),
         )
         
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """
-        Forward pass at multiple scales.
-        
-        Args:
-            x: Audio waveform [batch_size, sequence_length]
-            
-        Returns:
-            outputs: List of discriminator outputs at each scale
-        """
-        # Add channel dimension: [B, T] -> [B, 1, T]
         x = x.unsqueeze(1)
         
         outputs = []
@@ -142,7 +121,7 @@ class MultiPeriodDiscriminator(nn.Module):
         super().__init__()
         
         if periods is None:
-            periods = [2, 3, 5, 7, 11]
+            periods = list(MPD_PERIODS)
         
         self.periods = periods
         self.discriminators = nn.ModuleList([
@@ -150,33 +129,22 @@ class MultiPeriodDiscriminator(nn.Module):
         ])
     
     def _make_period_discriminator(self) -> nn.Sequential:
-        """Create a period discriminator with 2D convolutions."""
         return nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=(5, 1), stride=(3, 1), padding=(2, 0)),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv2d(32, 128, kernel_size=(5, 1), stride=(3, 1), padding=(2, 0)),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv2d(128, 256, kernel_size=(5, 1), stride=(3, 1), padding=(2, 0)),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv2d(256, 512, kernel_size=(5, 1), stride=(3, 1), padding=(2, 0)),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(LEAKY_RELU_SLOPE),
             nn.Conv2d(512, 1, kernel_size=(3, 1), padding=(1, 0)),
         )
     
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """
-        Forward pass with periodic reshaping.
-        
-        Args:
-            x: Audio waveform [batch_size, sequence_length]
-            
-        Returns:
-            outputs: List of discriminator outputs for each period
-        """
         outputs = []
         
         for period, disc in zip(self.periods, self.discriminators):
-            # Pad to make divisible by period
             batch_size, seq_len = x.shape
             if seq_len % period != 0:
                 pad_len = period - (seq_len % period)
@@ -184,10 +152,7 @@ class MultiPeriodDiscriminator(nn.Module):
             else:
                 x_padded = x
             
-            # Reshape: [B, T] -> [B, 1, T/period, period]
             x_reshaped = x_padded.view(batch_size, 1, -1, period)
-            
-            # Apply 2D convolutions
             output = disc(x_reshaped)
             outputs.append(output)
         

@@ -36,6 +36,14 @@
 # %%
 import modal
 import os
+from src.constants import (
+    SAMPLE_RATE,
+    HOP_SIZE,
+    NUM_ACOUSTIC_UNITS,
+    NUM_PITCH_BINS,
+    F0_MIN,
+    F0_MAX,
+)
 
 # %%
 app = modal.App("vocoder-v2-test")
@@ -60,7 +68,6 @@ image = (
 # %%
 AUDIO_MOUNT = "/mnt/audio_data"
 
-# Language configuration
 LANGUAGE_CONFIGS = {
     "portuguese": {
         "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio",
@@ -78,7 +85,6 @@ LANGUAGE_CONFIGS = {
     },
 }
 
-# Default paths (can be overridden via CLI)
 import os as _os
 _LANGUAGE = _os.environ.get("TRAINING_LANGUAGE", "portuguese")
 _config = LANGUAGE_CONFIGS.get(_LANGUAGE, LANGUAGE_CONFIGS["portuguese"])
@@ -186,7 +192,6 @@ class GeneratorV2(nn.Module):
     gpu="A10G",
 )
 def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
-    """Test the V2 vocoder and compute quality metrics."""
     import torch
     import numpy as np
     import soundfile as sf
@@ -206,7 +211,6 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     
     os.makedirs(TEST_OUTPUT_DIR, exist_ok=True)
     
-    # Load generator
     def load_module(code, name):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(code)
@@ -219,13 +223,11 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     gen_module = load_module(GENERATOR_V2_CODE, "generator_v2")
     GeneratorV2 = gen_module.GeneratorV2
     
-    generator = GeneratorV2(num_units=100, num_pitch_bins=32).to(device)
+    generator = GeneratorV2(num_units=NUM_ACOUSTIC_UNITS, num_pitch_bins=NUM_PITCH_BINS).to(device)
     
-    # Load checkpoint
     ckpt_path = os.path.join(VOCODER_DIR, checkpoint)
     if not os.path.exists(ckpt_path):
         print(f"❌ Checkpoint not found: {ckpt_path}")
-        # Try v2_latest.pt
         ckpt_path = os.path.join(VOCODER_DIR, "v2_latest.pt")
         if not os.path.exists(ckpt_path):
             print(f"❌ No V2 checkpoint found!")
@@ -237,7 +239,6 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     generator.eval()
     print(f"✓ Generator loaded (epoch {ckpt.get('epoch', '?')})")
     
-    # Load corpus
     corpus_path = os.path.join(OUTPUT_DIR, "portuguese_corpus_timestamped.json")
     with open(corpus_path, 'r') as f:
         corpus = json.load(f)
@@ -246,13 +247,12 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     np.random.shuffle(sample_keys)
     selected_keys = sample_keys[:num_samples]
     
-    # Metrics storage
     all_snr = []
     all_mcd = []
     all_f0_rmse = []
     results = {"samples": [], "aggregate_metrics": {}}
     
-    hop_size = 320
+    hop_size = HOP_SIZE
     
     print(f"\n🔬 Testing {num_samples} samples...")
     
@@ -260,7 +260,6 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
         data = corpus[segment_name]
         units = data['units']
         
-        # Find audio file
         audio_path = None
         for ext in ['.wav', '.WAV']:
             p = os.path.join(SEGMENTED_DIR, segment_name + ext)
@@ -272,20 +271,17 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             continue
         
         try:
-            # Load original audio
             original_audio, sr = sf.read(audio_path)
-            if sr != 16000:
-                original_audio = librosa.resample(original_audio, orig_sr=sr, target_sr=16000)
+            if sr != SAMPLE_RATE:
+                original_audio = librosa.resample(original_audio, orig_sr=sr, target_sr=SAMPLE_RATE)
             if len(original_audio.shape) > 1:
                 original_audio = original_audio.mean(axis=1)
             
-            # Extract pitch from original
             f0_orig, voiced, _ = librosa.pyin(
-                original_audio, fmin=50, fmax=400, sr=16000, hop_length=hop_size
+                original_audio, fmin=F0_MIN, fmax=F0_MAX, sr=SAMPLE_RATE, hop_length=hop_size
             )
             f0_orig = np.nan_to_num(f0_orig, nan=0.0)
             
-            # Quantize pitch
             num_units = len(units)
             if len(f0_orig) < num_units:
                 f0_orig = np.pad(f0_orig, (0, num_units - len(f0_orig)))
@@ -295,37 +291,32 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             pitch_bins = np.zeros_like(f0_orig, dtype=np.int64)
             voiced_mask = f0_orig > 0
             if np.any(voiced_mask):
-                log_f0 = np.log(np.clip(f0_orig[voiced_mask], 50, 400))
-                log_min, log_max = np.log(50), np.log(400)
+                log_f0 = np.log(np.clip(f0_orig[voiced_mask], F0_MIN, F0_MAX))
+                log_min, log_max = np.log(F0_MIN), np.log(F0_MAX)
                 normalized = (log_f0 - log_min) / (log_max - log_min)
-                pitch_bins[voiced_mask] = (normalized * 31 + 1).astype(np.int64)
+                pitch_bins[voiced_mask] = (normalized * (NUM_PITCH_BINS - 1) + 1).astype(np.int64)
             
-            # Generate audio
             units_tensor = torch.LongTensor(units).unsqueeze(0).to(device)
             pitch_tensor = torch.LongTensor(pitch_bins).unsqueeze(0).to(device)
             
             with torch.no_grad():
                 synth_audio = generator(units_tensor, pitch_tensor).squeeze().cpu().numpy()
             
-            # Normalize
             synth_audio = synth_audio / (np.max(np.abs(synth_audio)) + 1e-8) * 0.95
             
-            # Align lengths
             min_len = min(len(original_audio), len(synth_audio))
             orig_seg = original_audio[:min_len]
             synth_seg = synth_audio[:min_len]
             
-            # Compute SNR
             diff = orig_seg - synth_seg
             signal_power = np.mean(orig_seg ** 2)
             noise_power = np.mean(diff ** 2)
             snr = 10 * np.log10(signal_power / (noise_power + 1e-10))
             all_snr.append(snr)
             
-            # Compute MCD
             try:
-                orig_mfcc = librosa.feature.mfcc(y=orig_seg, sr=16000, n_mfcc=13)
-                synth_mfcc = librosa.feature.mfcc(y=synth_seg, sr=16000, n_mfcc=13)
+                orig_mfcc = librosa.feature.mfcc(y=orig_seg, sr=SAMPLE_RATE, n_mfcc=13)
+                synth_mfcc = librosa.feature.mfcc(y=synth_seg, sr=SAMPLE_RATE, n_mfcc=13)
                 min_frames = min(orig_mfcc.shape[1], synth_mfcc.shape[1])
                 mcd = np.mean(np.sqrt(2 * np.sum(
                     (orig_mfcc[:, :min_frames] - synth_mfcc[:, :min_frames]) ** 2, axis=0
@@ -334,19 +325,16 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             except:
                 mcd = None
             
-            # Compute F0 RMSE (pitch accuracy)
             try:
                 f0_synth, _, _ = librosa.pyin(
-                    synth_seg, fmin=50, fmax=400, sr=16000, hop_length=hop_size
+                    synth_seg, fmin=F0_MIN, fmax=F0_MAX, sr=SAMPLE_RATE, hop_length=hop_size
                 )
                 f0_synth = np.nan_to_num(f0_synth, nan=0.0)
                 
-                # Align F0 lengths
                 min_f0_len = min(len(f0_orig), len(f0_synth))
                 f0_orig_aligned = f0_orig[:min_f0_len]
                 f0_synth_aligned = f0_synth[:min_f0_len]
                 
-                # Only compute on voiced frames
                 voiced = (f0_orig_aligned > 0) & (f0_synth_aligned > 0)
                 if np.sum(voiced) > 0:
                     f0_rmse = np.sqrt(np.mean(
@@ -358,15 +346,14 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             except:
                 f0_rmse = None
             
-            # Save samples
             if idx < 20:
                 write(
                     os.path.join(TEST_OUTPUT_DIR, f"v2_synth_{idx:04d}.wav"),
-                    16000, (synth_audio * 32767).astype(np.int16)
+                    SAMPLE_RATE, (synth_audio * 32767).astype(np.int16)
                 )
                 write(
                     os.path.join(TEST_OUTPUT_DIR, f"v2_orig_{idx:04d}.wav"),
-                    16000, (orig_seg * 32767).astype(np.int16)
+                    SAMPLE_RATE, (orig_seg * 32767).astype(np.int16)
                 )
             
             results["samples"].append({
@@ -380,7 +367,6 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             print(f"⚠️  Error on {segment_name}: {e}")
             continue
     
-    # Aggregate metrics
     results["aggregate_metrics"] = {
         "mean_snr_db": float(np.mean(all_snr)) if all_snr else None,
         "std_snr_db": float(np.std(all_snr)) if all_snr else None,
@@ -415,7 +401,6 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             print("    ❌ Poor pitch accuracy (> 50 Hz)")
     print("=" * 60)
     
-    # Save results
     with open(os.path.join(TEST_OUTPUT_DIR, "test_results_v2.json"), 'w') as f:
         json.dump(results, f, indent=2)
     
@@ -429,14 +414,6 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
 # %%
 @app.local_entrypoint()
 def main(language: str = "portuguese", num_samples: int = 50, checkpoint: str = "v2_best.pt"):
-    """Test the trained V2 vocoder.
-    
-    Args:
-        language: Language to test ('portuguese' or 'satere')
-        num_samples: Number of samples to test
-        checkpoint: Checkpoint file to use
-    """
-    # Set environment variable for language selection
     import os
     os.environ["TRAINING_LANGUAGE"] = language
     

@@ -57,22 +57,32 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm, remove_weight_norm
 from typing import List, Optional
+from src.constants import (
+    NUM_ACOUSTIC_UNITS,
+    NUM_PITCH_BINS,
+    UNIT_EMBED_DIM,
+    PITCH_EMBED_DIM,
+    UPSAMPLE_INITIAL_CHANNEL,
+    UPSAMPLE_RATES,
+    UPSAMPLE_KERNEL_SIZES,
+    RESBLOCK_KERNEL_SIZES,
+    RESBLOCK_DILATIONS,
+    LEAKY_RELU_SLOPE,
+    SAMPLE_RATE,
+    HOP_SIZE,
+    F0_MIN,
+    F0_MAX,
+    PITCH_UNVOICED_BIN,
+)
 
 
 # %%
 def get_padding(kernel_size: int, dilation: int = 1) -> int:
-    """Calculate padding for 'same' convolution."""
     return (kernel_size * dilation - dilation) // 2
 
 
 # %%
 class ResBlock(nn.Module):
-    """
-    Residual block with dilated convolutions (HiFi-GAN style).
-    
-    Uses multiple dilation rates for multi-scale receptive field.
-    """
-    
     def __init__(self, channels: int, kernel_size: int = 3, 
                  dilations: List[List[int]] = [[1, 1], [3, 1], [5, 1]]):
         super().__init__()
@@ -99,9 +109,9 @@ class ResBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for conv1, conv2 in zip(self.convs1, self.convs2):
             residual = x
-            x = F.leaky_relu(x, 0.1)
+            x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
             x = conv1(x)
-            x = F.leaky_relu(x, 0.1)
+            x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
             x = conv2(x)
             x = x + residual
         return x
@@ -115,13 +125,6 @@ class ResBlock(nn.Module):
 
 # %%
 class MultiReceptiveFieldFusion(nn.Module):
-    """
-    Multi-Receptive Field Fusion (MRF) module.
-    
-    Applies multiple ResBlocks with different kernel sizes and sums their outputs.
-    This captures patterns at multiple temporal scales.
-    """
-    
     def __init__(self, channels: int, 
                  kernel_sizes: List[int] = [3, 7, 11],
                  dilations: List[List[List[int]]] = None):
@@ -187,30 +190,29 @@ class GeneratorV2(nn.Module):
     
     def __init__(
         self,
-        num_units: int = 100,
-        num_pitch_bins: int = 32,
-        unit_embed_dim: int = 256,
-        pitch_embed_dim: int = 64,
+        num_units: int = NUM_ACOUSTIC_UNITS,
+        num_pitch_bins: int = NUM_PITCH_BINS,
+        unit_embed_dim: int = UNIT_EMBED_DIM,
+        pitch_embed_dim: int = PITCH_EMBED_DIM,
         upsample_rates: List[int] = None,
         upsample_kernel_sizes: List[int] = None,
-        upsample_initial_channel: int = 512,
+        upsample_initial_channel: int = UPSAMPLE_INITIAL_CHANNEL,
         resblock_kernel_sizes: List[int] = None,
         resblock_dilation_sizes: List[List[List[int]]] = None,
     ):
         super().__init__()
         
-        # Default values
         if upsample_rates is None:
-            upsample_rates = [5, 4, 4, 4]  # 5 * 4 * 4 * 4 = 320
+            upsample_rates = list(UPSAMPLE_RATES)
         if upsample_kernel_sizes is None:
-            upsample_kernel_sizes = [10, 8, 8, 8]
+            upsample_kernel_sizes = list(UPSAMPLE_KERNEL_SIZES)
         if resblock_kernel_sizes is None:
-            resblock_kernel_sizes = [3, 7, 11]
+            resblock_kernel_sizes = list(RESBLOCK_KERNEL_SIZES)
         if resblock_dilation_sizes is None:
             resblock_dilation_sizes = [
-                [[1, 1], [3, 1], [5, 1]],
-                [[1, 1], [3, 1], [5, 1]],
-                [[1, 1], [3, 1], [5, 1]],
+                RESBLOCK_DILATIONS,
+                RESBLOCK_DILATIONS,
+                RESBLOCK_DILATIONS,
             ]
         
         self.num_units = num_units
@@ -220,17 +222,14 @@ class GeneratorV2(nn.Module):
         for r in upsample_rates:
             self.upsample_factor *= r
         
-        # Embeddings
         self.unit_embed = nn.Embedding(num_units, unit_embed_dim)
-        self.pitch_embed = nn.Embedding(num_pitch_bins + 1, pitch_embed_dim)  # +1 for no-pitch token
+        self.pitch_embed = nn.Embedding(num_pitch_bins + 1, pitch_embed_dim)
         
-        # Pre-convolution
         input_dim = unit_embed_dim + pitch_embed_dim
         self.pre_conv = weight_norm(
             nn.Conv1d(input_dim, upsample_initial_channel, 7, padding=3)
         )
         
-        # Upsampling blocks with MRF
         self.ups = nn.ModuleList()
         self.mrfs = nn.ModuleList()
         
@@ -249,14 +248,10 @@ class GeneratorV2(nn.Module):
             )
             ch = ch // 2
         
-        # Post-convolution
         self.post_conv = weight_norm(nn.Conv1d(ch, 1, 7, padding=3))
-        
-        # Initialize weights
         self._init_weights()
     
     def _init_weights(self):
-        """Initialize weights with small values for stable training."""
         for m in self.modules():
             if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
                 nn.init.normal_(m.weight, 0.0, 0.01)
@@ -268,51 +263,29 @@ class GeneratorV2(nn.Module):
         units: torch.Tensor, 
         pitch: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """
-        Forward pass.
-        
-        Args:
-            units: Unit indices [batch_size, sequence_length]
-            pitch: Pitch bin indices [batch_size, sequence_length] (optional)
-                   If None, uses zero pitch (no pitch conditioning)
-            
-        Returns:
-            audio: Waveform [batch_size, sequence_length * 320]
-        """
-        # Embed units: [B, T] -> [B, T, unit_embed_dim]
         unit_emb = self.unit_embed(units)
         
-        # Embed pitch: [B, T] -> [B, T, pitch_embed_dim]
         if pitch is None:
             # Use "no pitch" token (index 0)
             pitch = torch.zeros_like(units)
         pitch_emb = self.pitch_embed(pitch)
         
-        # Concatenate embeddings: [B, T, unit_embed_dim + pitch_embed_dim]
         x = torch.cat([unit_emb, pitch_emb], dim=-1)
-        
-        # Transpose for conv1d: [B, T, C] -> [B, C, T]
         x = x.transpose(1, 2)
-        
-        # Pre-processing
         x = self.pre_conv(x)
         
-        # Upsampling with MRF
         for up, mrf in zip(self.ups, self.mrfs):
-            x = F.leaky_relu(x, 0.1)
+            x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
             x = up(x)
             x = mrf(x)
         
-        # Post-processing
-        x = F.leaky_relu(x, 0.1)
+        x = F.leaky_relu(x, LEAKY_RELU_SLOPE)
         x = self.post_conv(x)
         x = torch.tanh(x)
         
-        # Remove channel dimension: [B, 1, T*320] -> [B, T*320]
         return x.squeeze(1)
     
     def remove_weight_norm(self):
-        """Remove weight normalization for inference."""
         remove_weight_norm(self.pre_conv)
         for up in self.ups:
             remove_weight_norm(up)
@@ -327,9 +300,9 @@ class GeneratorV2(nn.Module):
 # These functions help extract and quantize pitch (F0) from audio.
 
 # %%
-def extract_pitch(audio: torch.Tensor, sample_rate: int = 16000, 
-                  hop_length: int = 320, f0_min: float = 50.0, 
-                  f0_max: float = 400.0) -> torch.Tensor:
+def extract_pitch(audio: torch.Tensor, sample_rate: int = SAMPLE_RATE, 
+                  hop_length: int = HOP_SIZE, f0_min: float = F0_MIN, 
+                  f0_max: float = F0_MAX) -> torch.Tensor:
     """
     Extract pitch (F0) from audio using a simple autocorrelation method.
     
@@ -345,21 +318,17 @@ def extract_pitch(audio: torch.Tensor, sample_rate: int = 16000,
     Returns:
         pitch: F0 values in Hz [batch_size, num_frames] or [num_frames]
     """
-    # This is a placeholder - in production, use a proper pitch extractor
-    # like CREPE (neural) or PYIN (signal processing)
-    
     if audio.dim() == 1:
         audio = audio.unsqueeze(0)
     
     batch_size, num_samples = audio.shape
     num_frames = num_samples // hop_length
     
-    # Placeholder: return zeros (will need to replace with actual extraction)
     return torch.zeros(batch_size, num_frames, device=audio.device)
 
 
-def quantize_pitch(pitch: torch.Tensor, num_bins: int = 32,
-                   f0_min: float = 50.0, f0_max: float = 400.0) -> torch.Tensor:
+def quantize_pitch(pitch: torch.Tensor, num_bins: int = NUM_PITCH_BINS,
+                   f0_min: float = F0_MIN, f0_max: float = F0_MAX) -> torch.Tensor:
     """
     Quantize continuous pitch values to discrete bins.
     
@@ -375,21 +344,17 @@ def quantize_pitch(pitch: torch.Tensor, num_bins: int = 32,
         pitch_bins: Quantized pitch [batch_size, num_frames]
                    0 = unvoiced/no pitch, 1-num_bins = voiced
     """
-    # Handle unvoiced (pitch = 0 or NaN)
     voiced_mask = (pitch > 0) & ~torch.isnan(pitch)
     
-    # Log-scale binning
     log_min = torch.log(torch.tensor(f0_min))
     log_max = torch.log(torch.tensor(f0_max))
     
     pitch_clamped = torch.clamp(pitch, f0_min, f0_max)
     log_pitch = torch.log(pitch_clamped)
     
-    # Normalize to [0, 1] then to [1, num_bins]
     normalized = (log_pitch - log_min) / (log_max - log_min)
     bins = (normalized * (num_bins - 1) + 1).long()
     
-    # Set unvoiced frames to 0
     bins = torch.where(voiced_mask, bins, torch.zeros_like(bins))
     
     return bins

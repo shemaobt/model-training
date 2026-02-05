@@ -45,6 +45,12 @@ import modal
 import os
 import subprocess
 import sys
+from src.constants import (
+    SEGMENT_LENGTH,
+    DEFAULT_EPOCHS,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_PATIENCE,
+)
 
 # %%
 app = modal.App("full-training-pipeline")
@@ -56,30 +62,12 @@ def main(
     phases: str = "1,2,3",
     vocoder_version: str = "v2",
     detach: bool = True,
-    # Phase 1 options
     skip_segmentation: bool = True,
-    # Phase 3 options
-    epochs: int = 1000,
-    batch_size: int = 12,
-    segment_length: int = 32000,
-    patience: int = 100,
+    epochs: int = DEFAULT_EPOCHS,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    segment_length: int = SEGMENT_LENGTH,
+    patience: int = DEFAULT_PATIENCE,
 ):
-    """
-    Run the full training pipeline.
-    
-    Args:
-        language: Language to train on ('portuguese' or 'satere')
-        phases: Comma-separated list of phases to run (1,2,3)
-        vocoder_version: 'v1' or 'v2' (default: v2)
-        detach: Run in detached mode (default: True)
-        skip_segmentation: Skip audio segmentation in Phase 1 (default: True)
-        epochs: Max epochs for vocoder training
-        batch_size: Batch size for vocoder training
-        segment_length: Audio segment length in samples (16000=1s, 32000=2s)
-        patience: Early stopping patience
-    """
-    
-    # Parse phases
     phase_list = [int(p.strip()) for p in phases.split(",")]
     
     print("=" * 60)
@@ -91,10 +79,7 @@ def main(
     print(f"  Detached mode: {detach}")
     print("=" * 60)
     
-    # Get the directory of this script
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Build commands for each phase
     commands = []
     
     if 1 in phase_list:
@@ -126,7 +111,6 @@ def main(
             )
         commands.append((f"Phase 3: Vocoder Training ({vocoder_version.upper()})", cmd))
     
-    # Execute commands
     for phase_name, cmd in commands:
         print(f"\n{'=' * 60}")
         print(f"🔄 Starting: {phase_name}")
@@ -134,12 +118,9 @@ def main(
         print(f"Command: {cmd}\n")
         
         if detach:
-            # In detached mode, just print the command and let user run it
-            # because we can't chain detached processes
             print(f"⚠️  In detached mode, run each phase separately:")
             print(f"    {cmd}")
         else:
-            # In attached mode, run sequentially
             result = subprocess.run(cmd, shell=True)
             if result.returncode != 0:
                 print(f"❌ {phase_name} failed with code {result.returncode}")

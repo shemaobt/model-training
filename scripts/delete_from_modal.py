@@ -1,25 +1,16 @@
-"""
-Delete segmented audio files from Modal volume
-Use with caution - this will delete all segments!
-"""
-
 import modal
 import os
 
-# Create Modal app
 app = modal.App("bible-audio-training")
 
-# Create persistent volume (same as Phase 1)
 audio_volume = modal.Volume.from_name(
     "bible-audio-data",
     create_if_missing=True
 )
 
-# Modal paths
 AUDIO_MOUNT = "/mnt/audio_data"
 SEGMENTED_DIR = f"{AUDIO_MOUNT}/segmented_audio"
 
-# Create minimal image
 image = (
     modal.Image.debian_slim()
 )
@@ -31,7 +22,6 @@ image = (
     timeout=600,  # 10 minutes
 )
 def delete_segmented_audio():
-    """Delete all segmented audio files from Modal volume"""
     deleted_count = 0
     total_size = 0
     
@@ -41,7 +31,6 @@ def delete_segmented_audio():
     
     print(f"📁 Scanning directory: {SEGMENTED_DIR}")
     
-    # List all files
     files_to_delete = []
     for filename in os.listdir(SEGMENTED_DIR):
         file_path = os.path.join(SEGMENTED_DIR, filename)
@@ -59,7 +48,6 @@ def delete_segmented_audio():
         print("✓ No files to delete")
         return {"deleted": 0, "size_mb": 0}
     
-    # Delete files
     print(f"\n🗑️  Deleting {len(files_to_delete)} files...")
     for file_path in files_to_delete:
         try:
@@ -68,7 +56,6 @@ def delete_segmented_audio():
         except Exception as e:
             print(f"⚠️  Error deleting {os.path.basename(file_path)}: {e}")
     
-    # Commit volume changes
     audio_volume.commit()
     
     print(f"\n✅ Deletion complete!")
@@ -83,7 +70,6 @@ def delete_segmented_audio():
 
 @app.local_entrypoint()
 def main():
-    """Delete segmented audio files from Modal volume"""
     print("=" * 60)
     print("🗑️  Delete Segmented Audio Files from Modal Volume")
     print("=" * 60)

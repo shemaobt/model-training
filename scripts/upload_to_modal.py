@@ -1,33 +1,11 @@
-"""
-Upload locally segmented audio files to Modal volume - Generic for any language
-
-Supports multiple languages with separate Modal directories.
-
-Usage:
-    # Upload Portuguese segments
-    python upload_to_modal.py --language portuguese
-    
-    # Upload Sateré segments
-    python upload_to_modal.py --language satere
-    
-    # Custom directories
-    python upload_to_modal.py --local /path/to/segments --remote /mnt/audio_data/custom_segments
-"""
-
 import modal
 import os
 import argparse
 from tqdm import tqdm
 
 
-# ============================================================================
-# Configuration
-# ============================================================================
-
-# Base directory
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Predefined language configurations
 LANGUAGE_CONFIGS = {
     "portuguese": {
         "local_dir": os.path.join(BASE_DIR, "local_segments"),
@@ -41,13 +19,7 @@ LANGUAGE_CONFIGS = {
     },
 }
 
-# Modal configuration
 AUDIO_MOUNT = "/mnt/audio_data"
-
-
-# ============================================================================
-# Modal Setup
-# ============================================================================
 
 app = modal.App("bible-audio-training")
 
@@ -58,10 +30,6 @@ audio_volume = modal.Volume.from_name(
 
 image = modal.Image.debian_slim().pip_install("tqdm")
 
-
-# ============================================================================
-# Modal Functions
-# ============================================================================
 
 @app.function(
     image=image,
@@ -94,7 +62,6 @@ def upload_segment_batch(file_data_list: list, remote_dir: str, batch_num: int, 
         try:
             file_path = os.path.join(remote_dir, filename)
             
-            # Write file in chunks to avoid memory issues
             with open(file_path, 'wb') as f:
                 chunk_size = 10 * 1024 * 1024  # 10MB chunks
                 for i in range(0, len(file_data), chunk_size):
@@ -105,15 +72,10 @@ def upload_segment_batch(file_data_list: list, remote_dir: str, batch_num: int, 
         except Exception as e:
             errors.append(f"{filename}: {str(e)}")
     
-    # Commit after each batch
     audio_volume.commit()
     
     return uploaded, errors
 
-
-# ============================================================================
-# Local Entrypoint
-# ============================================================================
 
 @app.local_entrypoint()
 def main(
@@ -154,13 +116,11 @@ def main(
     print(f"📂 Local: {local_dir}")
     print(f"☁️  Remote: {remote_dir}")
     
-    # Check local directory
     if not os.path.exists(local_dir):
         print(f"\n❌ Local segments directory not found: {local_dir}")
         print(f"   Please run first: python scripts/segment_audio.py --language {language}")
         return
     
-    # Collect local segment files
     print("\n📁 Collecting local segment files...")
     segment_files = []
     for f in os.listdir(local_dir):
@@ -173,12 +133,10 @@ def main(
         print("❌ No segment files found!")
         return
     
-    # Check existing files in Modal
     print("\n🔍 Checking existing files in Modal volume...")
     existing_files = set(list_existing_segments.remote(remote_dir))
     print(f"✓ Found {len(existing_files)} files already in volume")
     
-    # Filter out already uploaded files
     files_to_upload = []
     file_sizes = []
     
@@ -246,7 +204,6 @@ def main(
                     print(f"\n❌ Error uploading batch {batch_num}: {e}")
                     total_errors.append(f"Batch {batch_num}: {str(e)}")
     
-    # Summary
     print("\n" + "=" * 60)
     print("✅ Upload Complete!")
     print("=" * 60)

@@ -1,21 +1,5 @@
-"""
-Local audio segmentation script - Generic for any language
-
-Segments audio files by silence/pauses before uploading to Modal.
-Supports multiple languages with separate output directories.
-
-Usage:
-    # Segment Portuguese Bible audio
-    python segment_audio.py --language portuguese
-    
-    # Segment Sateré audio
-    python segment_audio.py --language satere
-    
-    # Custom input/output directories
-    python segment_audio.py --input /path/to/audio --output /path/to/segments --language custom
-"""
-
 import os
+import sys
 import argparse
 import librosa
 import numpy as np
@@ -24,20 +8,23 @@ import subprocess
 import shutil
 from tqdm import tqdm
 
-
-# ============================================================================
-# Configuration
-# ============================================================================
-
-# Base directory for audio data
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 
-# Predefined language configurations
+from src.constants import (
+    SAMPLE_RATE,
+    SILENCE_THRESHOLD_DB,
+    MIN_SILENCE_DURATION,
+    MIN_SEGMENT_DURATION,
+    MAX_SEGMENT_DURATION,
+    FRAME_DURATION,
+    HOP_DURATION,
+)
+
 LANGUAGE_CONFIGS = {
     "portuguese": {
         "input_dirs": [
-            "/Users/joao/Desktop/work/shema/shemaobt/scripts/Antigo_Testamento_COMPLETO",
-            "/Users/joao/Desktop/work/shema/shemaobt/scripts/NOVO_TESTAMENTO_COMPLETO",
+            os.path.join(BASE_DIR, "audio_data", "raw_audio"),
         ],
         "output_dir": os.path.join(BASE_DIR, "local_segments"),
     },
@@ -49,24 +36,14 @@ LANGUAGE_CONFIGS = {
     },
 }
 
-# Segmentation parameters
-SILENCE_THRESHOLD = -40  # dB threshold for silence
-MIN_SILENCE_DURATION = 0.5  # Minimum silence duration in seconds
-MIN_SEGMENT_DURATION = 2.0  # Minimum segment duration in seconds
-MAX_SEGMENT_DURATION = 120.0  # Maximum segment duration in seconds
-SAMPLE_RATE = 16000
+SILENCE_THRESHOLD = SILENCE_THRESHOLD_DB
 
-
-# ============================================================================
-# Audio Processing Functions
-# ============================================================================
 
 def convert_mp3_to_wav(mp3_path: str, wav_path: str) -> bool:
-    """Convert MP3 to 16kHz mono WAV."""
     cmd = [
         "ffmpeg", "-y", "-i", mp3_path,
         "-ar", str(SAMPLE_RATE),
-        "-ac", "1",  # mono
+        "-ac", "1",
         wav_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -77,27 +54,18 @@ def convert_mp3_to_wav(mp3_path: str, wav_path: str) -> bool:
 
 
 def segment_audio_file(wav_path: str, output_dir: str) -> int:
-    """Segment a single audio file by silence detection."""
     try:
-        # Load audio
         audio, sr = librosa.load(wav_path, sr=SAMPLE_RATE, mono=True)
         duration = len(audio) / sr
         
-        # Detect silence using energy-based approach
-        frame_length = int(0.025 * sr)  # 25ms frames
-        hop_length = int(0.010 * sr)    # 10ms hop
+        frame_length = int(FRAME_DURATION * sr)
+        hop_length = int(HOP_DURATION * sr)
         
-        # Calculate RMS energy per frame
         rms = librosa.feature.rms(y=audio, frame_length=frame_length, hop_length=hop_length)[0]
-        
-        # Convert to dB
         rms_db = librosa.power_to_db(rms**2, ref=np.max)
         
-        # Find silence regions (below threshold)
         silence_mask = rms_db < SILENCE_THRESHOLD
-        
-        # Find segment boundaries
-        segment_boundaries = [0]  # Start with beginning
+        segment_boundaries = [0]
         
         in_silence = False
         silence_start = None
@@ -115,10 +83,8 @@ def segment_audio_file(wav_path: str, output_dir: str) -> int:
                 in_silence = False
                 silence_start = None
         
-        # Add end boundary
         segment_boundaries.append(duration)
         
-        # Create segments
         base_name = os.path.splitext(os.path.basename(wav_path))[0]
         segment_num = 0
         segments_created = 0
@@ -128,11 +94,9 @@ def segment_audio_file(wav_path: str, output_dir: str) -> int:
             end_time = segment_boundaries[i + 1]
             segment_duration = end_time - start_time
             
-            # Skip segments that are too short
             if segment_duration < MIN_SEGMENT_DURATION:
                 continue
             
-            # If segment is too long, split it
             if segment_duration > MAX_SEGMENT_DURATION:
                 num_splits = int(np.ceil(segment_duration / MAX_SEGMENT_DURATION))
                 split_duration = segment_duration / num_splits
@@ -177,7 +141,6 @@ def segment_audio_file(wav_path: str, output_dir: str) -> int:
 
 
 def collect_audio_files(input_dirs: list, extensions: tuple = ('.mp3', '.wav', '.flac')) -> list:
-    """Collect all audio files from input directories."""
     audio_files = []
     
     for directory in input_dirs:
@@ -194,7 +157,6 @@ def collect_audio_files(input_dirs: list, extensions: tuple = ('.mp3', '.wav', '
 
 
 def get_already_segmented(output_dir: str) -> set:
-    """Get set of base filenames already segmented."""
     existing = set()
     if os.path.exists(output_dir):
         for f in os.listdir(output_dir):
@@ -204,10 +166,6 @@ def get_already_segmented(output_dir: str) -> set:
                 existing.add(base)
     return existing
 
-
-# ============================================================================
-# Main
-# ============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
@@ -233,7 +191,6 @@ def main():
     
     args = parser.parse_args()
     
-    # Determine input/output directories
     if args.input:
         input_dirs = args.input
         output_dir = args.output or os.path.join(BASE_DIR, f"local_segments_{args.language}")
@@ -256,10 +213,8 @@ def main():
         print(f"   {exists} {d}")
     print(f"\n📁 Output directory: {output_dir}")
     
-    # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Collect audio files
     print("\n🔍 Scanning for audio files...")
     audio_files = collect_audio_files(input_dirs)
     print(f"✓ Found {len(audio_files)} audio files")
@@ -268,10 +223,8 @@ def main():
         print("❌ No audio files found!")
         return
     
-    # Check what's already segmented
     existing_segments = get_already_segmented(output_dir)
     
-    # Filter out already processed files
     files_to_process = []
     for audio_path in audio_files:
         base_name = os.path.splitext(os.path.basename(audio_path))[0]
@@ -286,7 +239,6 @@ def main():
         print("\n✅ All files already segmented!")
         return
     
-    # Process files
     print(f"\n✂️  Segmenting {len(files_to_process)} files...")
     print("-" * 60)
     
@@ -298,7 +250,6 @@ def main():
         base_name = os.path.splitext(os.path.basename(audio_path))[0]
         ext = os.path.splitext(audio_path)[1].lower()
         
-        # Convert to WAV if needed
         if ext == '.wav':
             wav_path = audio_path
             needs_cleanup = False
@@ -309,15 +260,12 @@ def main():
                 continue
             needs_cleanup = True
         
-        # Segment the file
         segments = segment_audio_file(wav_path, output_dir)
         total_segments += segments
         
-        # Clean up temp WAV file
         if needs_cleanup and os.path.exists(wav_path):
             os.remove(wav_path)
     
-    # Clean up temp directory
     if os.path.exists(temp_wav_dir):
         shutil.rmtree(temp_wav_dir)
     
