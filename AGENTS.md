@@ -40,6 +40,187 @@ This document defines engineering standards and behaviors for LLM agents working
 - Good (exception): Comment for non-obvious "why": `# Layer 14 provides best phonetic content while filtering speaker identity` or `# Use numpy<2 due to librosa compatibility issues`.
 - Bad: Long comment blocks describing what each step does; refactor into smaller named functions instead.
 
+---
+
+## 2. Clean Code Principles
+
+### Single Responsibility Principle (SRP)
+
+- Each function should do **one thing only** and do it well.
+- If a function name contains "and" or does multiple unrelated operations, split it.
+- Functions should have **one reason to change**.
+
+**Examples:**
+
+- Good: `load_audio(path)`, `resample_audio(audio, target_sr)`, `normalize_audio(audio)` — separate concerns.
+- Bad: `load_and_process_audio(path)` that loads, resamples, normalizes, and segments.
+- Good: `save_checkpoint(model, path)` and `log_metrics(metrics)` — separate I/O concerns.
+- Bad: `save_checkpoint_and_log(model, path, metrics)` that mixes saving and logging.
+
+### Small functions
+
+- Functions should be **short and focused** — aim for 10-20 lines maximum.
+- If a function exceeds 30 lines, consider extracting helper functions.
+- Each function should be readable at a glance.
+
+**Examples:**
+
+- Good:
+```python
+def compute_mel_loss(real_audio: Tensor, fake_audio: Tensor) -> Tensor:
+    real_mel = compute_mel_spectrogram(real_audio)
+    fake_mel = compute_mel_spectrogram(fake_audio)
+    return F.l1_loss(fake_mel, real_mel)
+```
+- Bad: A 100-line function that computes multiple losses, handles edge cases, and logs results inline.
+
+### DRY (Don't Repeat Yourself)
+
+- **Extract repeated code** into named functions.
+- Use constants for repeated literals.
+- Create shared utilities for common patterns.
+
+**Examples:**
+
+- Good: `SAMPLE_RATE = 16000` used everywhere instead of hardcoded `16000`.
+- Bad: `audio, sr = librosa.load(path, sr=16000)` repeated in 5 different functions.
+- Good: Extract `load_audio_16k(path)` and reuse it.
+- Bad: Copy-pasting the same 10 lines of setup code in every training function.
+
+### Descriptive naming
+
+- **Function names**: Use verbs — `load_`, `compute_`, `extract_`, `save_`, `train_`, `validate_`.
+- **Variable names**: Use nouns — `audio_data`, `feature_matrix`, `checkpoint_path`.
+- **Boolean names**: Use `is_`, `has_`, `should_` — `is_valid`, `has_checkpoint`, `should_resume`.
+- **Constants**: UPPER_SNAKE_CASE — `SAMPLE_RATE`, `MAX_EPOCHS`, `BATCH_SIZE`.
+
+**Examples:**
+
+- Good: `def extract_xlsr_features(audio: np.ndarray) -> np.ndarray:`
+- Bad: `def process(x):` — unclear what it processes or returns.
+- Good: `checkpoint_path`, `best_loss`, `is_training`
+- Bad: `p`, `l`, `flag` — single letters or generic names.
+- Good: `for segment in audio_segments:` — clear iteration variable.
+- Bad: `for i in range(len(audio_segments)): segment = audio_segments[i]` — unnecessary indexing.
+
+### Early returns (guard clauses)
+
+- Use **early returns** to handle edge cases at the top of functions.
+- Reduces nesting and makes the "happy path" clear.
+- Fail fast and return early for invalid inputs.
+
+**Examples:**
+
+- Good:
+```python
+def process_audio_file(path: str) -> np.ndarray:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Audio file not found: {path}")
+    if not path.endswith(('.wav', '.mp3')):
+        raise ValueError(f"Unsupported format: {path}")
+    return load_and_process(path)
+```
+- Bad:
+```python
+def process_audio_file(path: str) -> np.ndarray:
+    if os.path.exists(path):
+        if path.endswith(('.wav', '.mp3')):
+            return load_and_process(path)
+        else:
+            raise ValueError(...)
+    else:
+        raise FileNotFoundError(...)
+```
+
+### Avoid magic numbers
+
+- Replace **literal numbers** with named constants.
+- Constants should explain the meaning of the value.
+- Group related constants together.
+
+**Examples:**
+
+- Good:
+```python
+XLSR_SAMPLE_RATE = 16000
+XLSR_LAYER = 14
+N_ACOUSTIC_UNITS = 100
+
+features = extract_features(audio, sample_rate=XLSR_SAMPLE_RATE, layer=XLSR_LAYER)
+kmeans = fit_kmeans(features, n_clusters=N_ACOUSTIC_UNITS)
+```
+- Bad:
+```python
+features = extract_features(audio, sample_rate=16000, layer=14)
+kmeans = fit_kmeans(features, n_clusters=100)
+```
+
+### Limit function arguments
+
+- Aim for **3 or fewer** arguments per function.
+- Use **dataclasses or typed dicts** for related parameters.
+- Use **keyword arguments with defaults** for optional parameters.
+
+**Examples:**
+
+- Good: `def train_vocoder(config: TrainingConfig):` with a dataclass.
+- Good: `def load_audio(path: str, sample_rate: int = 16000, mono: bool = True):`
+- Bad: `def train(model, optimizer, scheduler, train_loader, val_loader, epochs, batch_size, lr, patience, checkpoint_dir, log_dir):`
+
+### Avoid deep nesting
+
+- Keep indentation **shallow** (max 2-3 levels).
+- Use early returns, extract functions, or invert conditions to reduce nesting.
+- Deeply nested code is hard to read and test.
+
+**Examples:**
+
+- Good:
+```python
+def process_segments(segments: list) -> list:
+    results = []
+    for segment in segments:
+        if not is_valid(segment):
+            continue
+        processed = process_segment(segment)
+        results.append(processed)
+    return results
+```
+- Bad:
+```python
+def process_segments(segments: list) -> list:
+    results = []
+    for segment in segments:
+        if is_valid(segment):
+            if len(segment) > MIN_LENGTH:
+                if segment.dtype == np.float32:
+                    processed = process_segment(segment)
+                    if processed is not None:
+                        results.append(processed)
+    return results
+```
+
+### Error handling
+
+- **Fail fast**: Validate inputs early and raise meaningful exceptions.
+- Use **specific exception types** over generic `Exception`.
+- Log errors with context for debugging.
+
+**Examples:**
+
+- Good:
+```python
+def load_checkpoint(path: str) -> dict:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+    try:
+        return torch.load(path, map_location="cpu")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load checkpoint {path}: {e}")
+```
+- Bad: Silently returning `None` when a checkpoint doesn't exist.
+- Bad: Catching all exceptions with bare `except:` clause.
+
 ### Jupytext format
 
 - Training scripts use **Jupytext format**: Python files with cell markers that can run as notebooks or scripts.
@@ -56,7 +237,7 @@ This document defines engineering standards and behaviors for LLM agents working
 
 ---
 
-## 2. Architecture and Design
+## 3. Architecture and Design
 
 ### Project structure
 
@@ -110,7 +291,7 @@ model-training/
 
 ---
 
-## 3. Modal Cloud Training
+## 4. Modal Cloud Training
 
 - **Never run training scripts on the host machine.** All training runs on Modal's cloud GPUs.
 - Use `python3 -m modal run <script>` to execute training.
@@ -138,7 +319,7 @@ model-training/
 
 ---
 
-## 4. Dependency Management
+## 5. Dependency Management
 
 - Dependencies are defined **inline in Modal image definitions**.
 - There is no `requirements.txt` or `pyproject.toml` for training scripts.
@@ -167,7 +348,7 @@ image = (
 
 ---
 
-## 5. Training Pipeline Guidelines
+## 6. Training Pipeline Guidelines
 
 ### Language configuration
 
@@ -223,7 +404,7 @@ LANGUAGE_CONFIGS = {
 
 ---
 
-## 6. Model Architecture Guidelines
+## 7. Model Architecture Guidelines
 
 ### PyTorch models
 
@@ -252,7 +433,7 @@ LANGUAGE_CONFIGS = {
 
 ---
 
-## 7. Data Handling
+## 8. Data Handling
 
 ### Audio format
 
@@ -278,7 +459,7 @@ Raw MP3 → Local Segmentation → Upload to Modal → Phase 1 → Phase 2 → P
 
 ---
 
-## 8. Testing and Quality
+## 9. Testing and Quality
 
 - **No formal test framework** (no pytest). Use dedicated test scripts.
 - Test scripts: `vocoder_test.py`, `vocoder_test_v2.py`, `validate_units.py`.
@@ -292,7 +473,7 @@ Raw MP3 → Local Segmentation → Upload to Modal → Phase 1 → Phase 2 → P
 
 ---
 
-## 9. Secrets and Authentication
+## 10. Secrets and Authentication
 
 - **Modal handles authentication** via `modal token set`.
 - No `.env` files or hardcoded secrets.
@@ -305,7 +486,7 @@ Raw MP3 → Local Segmentation → Upload to Modal → Phase 1 → Phase 2 → P
 
 ---
 
-## 10. Version Control and Commits
+## 11. Version Control and Commits
 
 ### Do not commit unless asked
 
@@ -333,7 +514,7 @@ Raw MP3 → Local Segmentation → Upload to Modal → Phase 1 → Phase 2 → P
 
 ---
 
-## 11. Optional: Gloe for Pipeline Composition
+## 12. Optional: Gloe for Pipeline Composition
 
 [Gloe](https://github.com/ideos/gloe) is a type-safe pipeline composition library that aligns with the functional style in this codebase.
 
@@ -374,12 +555,14 @@ inference = load_audio >> extract_features >> quantize_units
 
 ---
 
-## 12. Summary Checklist for Agents
+## 13. Summary Checklist for Agents
 
 **Quick decision reference:**
 
 - **Paradigm:** Prefer functions and composition. Use classes only for PyTorch models (`nn.Module`).
 - **Comments:** Avoid comments for "what"; only for non-obvious "why".
+- **Clean Code:** Small functions (10-20 lines), single responsibility, early returns, named constants.
+- **Naming:** Verbs for functions (`load_`, `compute_`), nouns for variables, UPPER_SNAKE for constants.
 - **Format:** Use Jupytext (`# %%` cell markers) for training scripts.
 - **Execution:** Run training on Modal (`python3 -m modal run --detach`); never on host.
 - **Local scripts:** Only `scripts/` folder runs on host (preprocessing).
@@ -394,6 +577,12 @@ inference = load_audio >> extract_features >> quantize_units
 
 - [ ] Prefer functional style; use classes only for PyTorch models.
 - [ ] Write self-documenting code; avoid comments except for non-obvious "why".
+- [ ] Apply Single Responsibility Principle — one function does one thing.
+- [ ] Keep functions small (10-20 lines); extract helpers for complex logic.
+- [ ] Use descriptive names: verbs for functions, nouns for variables.
+- [ ] Use early returns (guard clauses) to reduce nesting.
+- [ ] Replace magic numbers with named constants.
+- [ ] Limit function arguments (≤3); use config objects for many params.
 - [ ] Use Jupytext format (`# %%` cell markers) for training scripts.
 - [ ] Run all training on Modal; never run training on host.
 - [ ] Use `--detach` for long-running training jobs.
