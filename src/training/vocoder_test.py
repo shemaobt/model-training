@@ -44,6 +44,7 @@
 # %%
 import modal
 import os
+from src.constants import SAMPLE_RATE, NUM_ACOUSTIC_UNITS
 
 # %%
 app = modal.App("bible-vocoder-test")
@@ -184,7 +185,7 @@ def test_vocoder(num_samples: int = 20):
     spec.loader.exec_module(gen_module)
     Generator = gen_module.Generator
     
-    generator = Generator(num_units=100).to(device)
+    generator = Generator(num_units=NUM_ACOUSTIC_UNITS).to(device)
     
     checkpoint_path = os.path.join(VOCODER_DIR, "vocoder_final.pt")
     if not os.path.exists(checkpoint_path):
@@ -220,8 +221,8 @@ def test_vocoder(num_samples: int = 20):
         
         try:
             original_audio, sr = sf.read(audio_path)
-            if sr != 16000:
-                original_audio = librosa.resample(original_audio, orig_sr=sr, target_sr=16000)
+            if sr != SAMPLE_RATE:
+                original_audio = librosa.resample(original_audio, orig_sr=sr, target_sr=SAMPLE_RATE)
             
             if len(original_audio.shape) > 1:
                 original_audio = original_audio.mean(axis=1)
@@ -244,8 +245,8 @@ def test_vocoder(num_samples: int = 20):
             all_snr.append(snr)
             
             try:
-                orig_mfcc = librosa.feature.mfcc(y=original_segment, sr=16000, n_mfcc=13)
-                synth_mfcc = librosa.feature.mfcc(y=synth_segment, sr=16000, n_mfcc=13)
+                orig_mfcc = librosa.feature.mfcc(y=original_segment, sr=SAMPLE_RATE, n_mfcc=13)
+                synth_mfcc = librosa.feature.mfcc(y=synth_segment, sr=SAMPLE_RATE, n_mfcc=13)
                 
                 min_frames = min(orig_mfcc.shape[1], synth_mfcc.shape[1])
                 mcd = np.mean(np.sqrt(2 * np.sum((orig_mfcc[:, :min_frames] - synth_mfcc[:, :min_frames]) ** 2, axis=0)))
@@ -254,8 +255,8 @@ def test_vocoder(num_samples: int = 20):
                 mcd = None
             
             if idx < 10:
-                write(os.path.join(TEST_OUTPUT_DIR, f"synth_{idx:04d}.wav"), 16000, (synth_audio * 32767).astype(np.int16))
-                write(os.path.join(TEST_OUTPUT_DIR, f"orig_{idx:04d}.wav"), 16000, (original_segment * 32767).astype(np.int16))
+                write(os.path.join(TEST_OUTPUT_DIR, f"synth_{idx:04d}.wav"), SAMPLE_RATE, (synth_audio * 32767).astype(np.int16))
+                write(os.path.join(TEST_OUTPUT_DIR, f"orig_{idx:04d}.wav"), SAMPLE_RATE, (original_segment * 32767).astype(np.int16))
             
             results["samples"].append({
                 "segment_name": segment_name[:50],

@@ -47,6 +47,13 @@
 # %%
 import modal
 import os
+from src.constants import (
+    DEFAULT_BPE_VOCAB_SIZE,
+    DEFAULT_BPE_MIN_FREQUENCY,
+    BPE_MAX_SENTENCE_LENGTH,
+    BPE_NUM_THREADS,
+    BPE_VOCAB_RETRY_FACTOR,
+)
 
 # %%
 app = modal.App("bible-audio-training")
@@ -102,8 +109,8 @@ PHASE2_OUTPUT_DIR = _config["phase2_output_dir"]
     timeout=3600,
 )
 def train_bpe_tokenizer(
-    vocab_size: int = 500,
-    min_frequency: int = 5,
+    vocab_size: int = DEFAULT_BPE_VOCAB_SIZE,
+    min_frequency: int = DEFAULT_BPE_MIN_FREQUENCY,
     language: str = "portuguese",
     force_retrain: bool = False,
 ):
@@ -169,8 +176,8 @@ def train_bpe_tokenizer(
                 vocab_size=current_vocab_size,
                 model_type='bpe',
                 character_coverage=1.0,
-                max_sentence_length=10000,
-                num_threads=4,
+                max_sentence_length=BPE_MAX_SENTENCE_LENGTH,
+                num_threads=BPE_NUM_THREADS,
                 input_sentence_size=len(unit_sequences),
                 shuffle_input_sentence=True,
                 byte_fallback=True,
@@ -216,7 +223,7 @@ def train_bpe_tokenizer(
                     print(f"⚠️  Vocab size too high. Max: {max_allowed}")
                     current_vocab_size = max_allowed - 10
                 else:
-                    current_vocab_size = int(current_vocab_size * 0.8)
+                    current_vocab_size = int(current_vocab_size * BPE_VOCAB_RETRY_FACTOR)
                 
                 if attempt < max_attempts - 1:
                     print(f"   Retrying with {current_vocab_size}...")

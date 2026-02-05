@@ -41,6 +41,7 @@
 # %%
 import modal
 import os
+from src.constants import SAMPLE_RATE
 
 # %%
 app = modal.App("bible-audio-training")
@@ -265,12 +266,12 @@ def validate_and_synthesize(
                         synth_audio = synth_audio / max_val * 0.95
                 
                 output_path = os.path.join(CHECKING_OUTPUT_DIR, f"synthesized_{idx:04d}.wav")
-                write(output_path, 16000, (synth_audio * 32767).astype(np.int16))
+                write(output_path, SAMPLE_RATE, (synth_audio * 32767).astype(np.int16))
                 
                 validation_results["synthesis_results"].append({
                     "sequence_idx": idx,
                     "num_units": len(units),
-                    "audio_length_sec": len(synth_audio) / 16000,
+                    "audio_length_sec": len(synth_audio) / SAMPLE_RATE,
                 })
                 
             except Exception as e:

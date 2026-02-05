@@ -36,6 +36,14 @@
 # %%
 import modal
 import os
+from src.constants import (
+    SAMPLE_RATE,
+    HOP_SIZE,
+    NUM_ACOUSTIC_UNITS,
+    NUM_PITCH_BINS,
+    F0_MIN,
+    F0_MAX,
+)
 
 # %%
 app = modal.App("vocoder-v2-test")
@@ -215,7 +223,7 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     gen_module = load_module(GENERATOR_V2_CODE, "generator_v2")
     GeneratorV2 = gen_module.GeneratorV2
     
-    generator = GeneratorV2(num_units=100, num_pitch_bins=32).to(device)
+    generator = GeneratorV2(num_units=NUM_ACOUSTIC_UNITS, num_pitch_bins=NUM_PITCH_BINS).to(device)
     
     ckpt_path = os.path.join(VOCODER_DIR, checkpoint)
     if not os.path.exists(ckpt_path):
@@ -244,7 +252,7 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     all_f0_rmse = []
     results = {"samples": [], "aggregate_metrics": {}}
     
-    hop_size = 320
+    hop_size = HOP_SIZE
     
     print(f"\n🔬 Testing {num_samples} samples...")
     
@@ -264,13 +272,13 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
         
         try:
             original_audio, sr = sf.read(audio_path)
-            if sr != 16000:
-                original_audio = librosa.resample(original_audio, orig_sr=sr, target_sr=16000)
+            if sr != SAMPLE_RATE:
+                original_audio = librosa.resample(original_audio, orig_sr=sr, target_sr=SAMPLE_RATE)
             if len(original_audio.shape) > 1:
                 original_audio = original_audio.mean(axis=1)
             
             f0_orig, voiced, _ = librosa.pyin(
-                original_audio, fmin=50, fmax=400, sr=16000, hop_length=hop_size
+                original_audio, fmin=F0_MIN, fmax=F0_MAX, sr=SAMPLE_RATE, hop_length=hop_size
             )
             f0_orig = np.nan_to_num(f0_orig, nan=0.0)
             
@@ -283,10 +291,10 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             pitch_bins = np.zeros_like(f0_orig, dtype=np.int64)
             voiced_mask = f0_orig > 0
             if np.any(voiced_mask):
-                log_f0 = np.log(np.clip(f0_orig[voiced_mask], 50, 400))
-                log_min, log_max = np.log(50), np.log(400)
+                log_f0 = np.log(np.clip(f0_orig[voiced_mask], F0_MIN, F0_MAX))
+                log_min, log_max = np.log(F0_MIN), np.log(F0_MAX)
                 normalized = (log_f0 - log_min) / (log_max - log_min)
-                pitch_bins[voiced_mask] = (normalized * 31 + 1).astype(np.int64)
+                pitch_bins[voiced_mask] = (normalized * (NUM_PITCH_BINS - 1) + 1).astype(np.int64)
             
             units_tensor = torch.LongTensor(units).unsqueeze(0).to(device)
             pitch_tensor = torch.LongTensor(pitch_bins).unsqueeze(0).to(device)
@@ -307,8 +315,8 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             all_snr.append(snr)
             
             try:
-                orig_mfcc = librosa.feature.mfcc(y=orig_seg, sr=16000, n_mfcc=13)
-                synth_mfcc = librosa.feature.mfcc(y=synth_seg, sr=16000, n_mfcc=13)
+                orig_mfcc = librosa.feature.mfcc(y=orig_seg, sr=SAMPLE_RATE, n_mfcc=13)
+                synth_mfcc = librosa.feature.mfcc(y=synth_seg, sr=SAMPLE_RATE, n_mfcc=13)
                 min_frames = min(orig_mfcc.shape[1], synth_mfcc.shape[1])
                 mcd = np.mean(np.sqrt(2 * np.sum(
                     (orig_mfcc[:, :min_frames] - synth_mfcc[:, :min_frames]) ** 2, axis=0
@@ -319,7 +327,7 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             
             try:
                 f0_synth, _, _ = librosa.pyin(
-                    synth_seg, fmin=50, fmax=400, sr=16000, hop_length=hop_size
+                    synth_seg, fmin=F0_MIN, fmax=F0_MAX, sr=SAMPLE_RATE, hop_length=hop_size
                 )
                 f0_synth = np.nan_to_num(f0_synth, nan=0.0)
                 
@@ -341,11 +349,11 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             if idx < 20:
                 write(
                     os.path.join(TEST_OUTPUT_DIR, f"v2_synth_{idx:04d}.wav"),
-                    16000, (synth_audio * 32767).astype(np.int16)
+                    SAMPLE_RATE, (synth_audio * 32767).astype(np.int16)
                 )
                 write(
                     os.path.join(TEST_OUTPUT_DIR, f"v2_orig_{idx:04d}.wav"),
-                    16000, (orig_seg * 32767).astype(np.int16)
+                    SAMPLE_RATE, (orig_seg * 32767).astype(np.int16)
                 )
             
             results["samples"].append({

@@ -56,6 +56,26 @@
 # %%
 import modal
 import os
+from src.constants import (
+    SAMPLE_RATE,
+    HOP_SIZE,
+    SEGMENT_LENGTH,
+    NUM_ACOUSTIC_UNITS,
+    NUM_PITCH_BINS,
+    DEFAULT_EPOCHS,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_ADAM_BETAS,
+    DEFAULT_LR_GAMMA,
+    DEFAULT_PATIENCE,
+    DEFAULT_SAVE_EVERY,
+    DEFAULT_SAMPLES_PER_EPOCH,
+    DEFAULT_GRAD_CLIP_MAX_NORM,
+    LAMBDA_MEL,
+    LAMBDA_STFT,
+    LAMBDA_FM,
+    EARLY_STOPPING_THRESHOLD,
+)
 
 # %%
 app = modal.App("bible-vocoder-v2-training")
@@ -495,18 +515,18 @@ def generator_adversarial_loss(fake_outputs):
     gpu="A10G",
 )
 def train_vocoder_v2(
-    epochs: int = 1000,
-    batch_size: int = 12,
-    learning_rate_g: float = 0.0002,
-    learning_rate_d: float = 0.0002,
-    segment_length: int = 32000,
-    save_every: int = 25,
+    epochs: int = DEFAULT_EPOCHS,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    learning_rate_g: float = DEFAULT_LEARNING_RATE,
+    learning_rate_d: float = DEFAULT_LEARNING_RATE,
+    segment_length: int = SEGMENT_LENGTH,
+    save_every: int = DEFAULT_SAVE_EVERY,
     resume_from: str = None,
-    patience: int = 100,
-    samples_per_epoch: int = 10000,
-    lambda_mel: float = 45.0,
-    lambda_stft: float = 2.0,
-    lambda_fm: float = 2.0,
+    patience: int = DEFAULT_PATIENCE,
+    samples_per_epoch: int = DEFAULT_SAMPLES_PER_EPOCH,
+    lambda_mel: float = LAMBDA_MEL,
+    lambda_stft: float = LAMBDA_STFT,
+    lambda_fm: float = LAMBDA_FM,
 ):
     import torch
     import torch.optim as optim
@@ -521,7 +541,7 @@ def train_vocoder_v2(
     print("=" * 60)
     print("🎵 Vocoder V2 Training")
     print("=" * 60)
-    print(f"  Segment length: {segment_length} samples ({segment_length/16000:.1f}s)")
+    print(f"  Segment length: {segment_length} samples ({segment_length/SAMPLE_RATE:.1f}s)")
     print(f"  Batch size: {batch_size}")
     print(f"  Loss weights: Mel={lambda_mel}, STFT={lambda_stft}, FM={lambda_fm}")
     print("=" * 60)
@@ -549,7 +569,7 @@ def train_vocoder_v2(
     CombinedDiscriminatorV2 = disc_module.CombinedDiscriminatorV2
     UnitAudioPitchDataset = data_module.UnitAudioPitchDataset
     
-    generator = GeneratorV2(num_units=100, num_pitch_bins=32).to(device)
+    generator = GeneratorV2(num_units=NUM_ACOUSTIC_UNITS, num_pitch_bins=NUM_PITCH_BINS).to(device)
     discriminator = CombinedDiscriminatorV2().to(device)
     
     g_params = sum(p.numel() for p in generator.parameters())
@@ -562,16 +582,15 @@ def train_vocoder_v2(
         print(f"❌ Corpus not found at {corpus_path}")
         return None
     
-    hop_size = 320
-    unit_length = segment_length // hop_size
+    unit_length = segment_length // HOP_SIZE
     
     dataset = UnitAudioPitchDataset(
         corpus_path=corpus_path,
         audio_dir=SEGMENTED_DIR,
         segment_length=segment_length,
-        hop_size=hop_size,
+        hop_size=HOP_SIZE,
         samples_per_epoch=samples_per_epoch,
-        num_pitch_bins=32,
+        num_pitch_bins=NUM_PITCH_BINS,
     )
     
     if len(dataset.samples) == 0:
@@ -587,11 +606,11 @@ def train_vocoder_v2(
         num_workers=0, drop_last=True, pin_memory=True
     )
     
-    optimizer_g = optim.AdamW(generator.parameters(), lr=learning_rate_g, betas=(0.8, 0.99))
-    optimizer_d = optim.AdamW(discriminator.parameters(), lr=learning_rate_d, betas=(0.8, 0.99))
+    optimizer_g = optim.AdamW(generator.parameters(), lr=learning_rate_g, betas=DEFAULT_ADAM_BETAS)
+    optimizer_d = optim.AdamW(discriminator.parameters(), lr=learning_rate_d, betas=DEFAULT_ADAM_BETAS)
     
-    scheduler_g = optim.lr_scheduler.ExponentialLR(optimizer_g, gamma=0.999)
-    scheduler_d = optim.lr_scheduler.ExponentialLR(optimizer_d, gamma=0.999)
+    scheduler_g = optim.lr_scheduler.ExponentialLR(optimizer_g, gamma=DEFAULT_LR_GAMMA)
+    scheduler_d = optim.lr_scheduler.ExponentialLR(optimizer_d, gamma=DEFAULT_LR_GAMMA)
     
     start_epoch = 0
     best_loss = float('inf')
@@ -666,7 +685,7 @@ def train_vocoder_v2(
             )
             
             g_loss.backward()
-            torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=5.0)
+            torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=DEFAULT_GRAD_CLIP_MAX_NORM)
             optimizer_g.step()
             
             # Accumulate losses
@@ -704,7 +723,7 @@ def train_vocoder_v2(
         
         # Early stopping on total generator loss
         current_loss = epoch_losses['g_total']
-        if current_loss < best_loss - 0.1:
+        if current_loss < best_loss - EARLY_STOPPING_THRESHOLD:
             best_loss = current_loss
             epochs_without_improvement = 0
             print(f"  ✓ New best: {best_loss:.2f}")
@@ -755,7 +774,7 @@ def train_vocoder_v2(
             with torch.no_grad():
                 sample = generator(units[:1], pitch[:1]).squeeze().cpu().numpy()
                 sample = (sample * 32767).astype(np.int16)
-                write(os.path.join(VOCODER_DIR, f"sample_v2_{epoch+1:04d}.wav"), 16000, sample)
+                write(os.path.join(VOCODER_DIR, f"sample_v2_{epoch+1:04d}.wav"), SAMPLE_RATE, sample)
             generator.train()
             
             audio_volume.commit()

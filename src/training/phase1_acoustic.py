@@ -45,6 +45,23 @@
 import modal
 import os
 from pathlib import Path
+from src.constants import (
+    SAMPLE_RATE,
+    XLSR_LAYER,
+    NUM_ACOUSTIC_UNITS,
+    KMEANS_BATCH_SIZE,
+    KMEANS_RANDOM_STATE,
+    KMEANS_N_INIT,
+    SILENCE_THRESHOLD_DB,
+    MIN_SILENCE_DURATION,
+    MIN_SEGMENT_DURATION,
+    MAX_SEGMENT_DURATION,
+    FRAME_DURATION,
+    HOP_DURATION,
+    DEFAULT_BUFFER_LIMIT,
+    DEFAULT_CHECKPOINT_INTERVAL,
+    PROGRESS_LOG_INTERVAL,
+)
 
 # %%
 app = modal.App("bible-audio-training")
@@ -140,7 +157,7 @@ def convert_mp3_to_wav(language: str = "portuguese"):
         mp3_file = os.path.basename(mp3_path)
         wav_path = os.path.join(converted_dir, mp3_file.replace('.mp3', '.wav'))
         
-        cmd = ["ffmpeg", "-y", "-i", mp3_path, "-ar", "16000", "-ac", "1", wav_path]
+        cmd = ["ffmpeg", "-y", "-i", mp3_path, "-ar", str(SAMPLE_RATE), "-ac", "1", wav_path]
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
@@ -164,10 +181,10 @@ def convert_mp3_to_wav(language: str = "portuguese"):
 )
 def segment_by_silence(
     language: str = "portuguese",
-    silence_threshold_db: float = -40.0,
-    min_silence_duration: float = 0.5,
-    min_segment_duration: float = 2.0,
-    max_segment_duration: float = 120.0,
+    silence_threshold_db: float = SILENCE_THRESHOLD_DB,
+    min_silence_duration: float = MIN_SILENCE_DURATION,
+    min_segment_duration: float = MIN_SEGMENT_DURATION,
+    max_segment_duration: float = MAX_SEGMENT_DURATION,
 ):
     import soundfile as sf
     import librosa
@@ -206,11 +223,11 @@ def segment_by_silence(
     
     for wav_path in tqdm(files_to_segment, desc="Segmenting by silence"):
         try:
-            audio, sr = librosa.load(wav_path, sr=16000, mono=True)
+            audio, sr = librosa.load(wav_path, sr=SAMPLE_RATE, mono=True)
             duration = len(audio) / sr
             
-            frame_length = int(0.025 * sr)
-            hop_length = int(0.010 * sr)
+            frame_length = int(FRAME_DURATION * sr)
+            hop_length = int(HOP_DURATION * sr)
             rms = librosa.feature.rms(y=audio, frame_length=frame_length, hop_length=hop_length)[0]
             rms_db = librosa.power_to_db(rms**2, ref=np.max)
             
@@ -261,7 +278,7 @@ def segment_by_silence(
                             "ffmpeg", "-y", "-i", wav_path,
                             "-ss", str(split_start),
                             "-t", str(split_end - split_start),
-                            "-ar", "16000", "-ac", "1",
+                            "-ar", str(SAMPLE_RATE), "-ac", "1",
                             segment_path
                         ]
                         subprocess.run(cmd, capture_output=True, text=True)
@@ -274,8 +291,8 @@ def segment_by_silence(
                     cmd = [
                         "ffmpeg", "-y", "-i", wav_path,
                         "-ss", str(start_time),
-                        "-t", str(segment_duration),
-                        "-ar", "16000", "-ac", "1",
+                        "-t", str(seg_duration),
+                        "-ar", str(SAMPLE_RATE), "-ac", "1",
                         segment_path
                     ]
                     subprocess.run(cmd, capture_output=True, text=True)
@@ -310,10 +327,10 @@ def segment_by_silence(
 def acoustic_tokenization(
     language: str = "portuguese",
     model_name: str = "facebook/wav2vec2-large-xlsr-53",
-    layer: int = 14,
-    num_clusters: int = 100,
-    buffer_limit: int = 20000,
-    checkpoint_interval: int = 1000,
+    layer: int = XLSR_LAYER,
+    num_clusters: int = NUM_ACOUSTIC_UNITS,
+    buffer_limit: int = DEFAULT_BUFFER_LIMIT,
+    checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
 ):
     import torch
     import torchaudio
@@ -351,15 +368,15 @@ def acoustic_tokenization(
             if waveform_data.ndim > 1:
                 waveform_data = waveform_data.mean(axis=1)
             
-            if rate != 16000:
+            if rate != SAMPLE_RATE:
                 waveform_tensor = torch.from_numpy(waveform_data).unsqueeze(0).float()
-                resampler = torchaudio.transforms.Resample(rate, 16000)
+                resampler = torchaudio.transforms.Resample(rate, SAMPLE_RATE)
                 waveform_tensor = resampler(waveform_tensor)
                 waveform_data = waveform_tensor.squeeze().numpy()
             
-            duration = len(waveform_data) / 16000
+            duration = len(waveform_data) / SAMPLE_RATE
             
-            inputs = extractor(waveform_data, return_tensors="pt", sampling_rate=16000)
+            inputs = extractor(waveform_data, return_tensors="pt", sampling_rate=SAMPLE_RATE)
             inputs = inputs.input_values.to(device)
             
             with torch.no_grad():
@@ -405,7 +422,12 @@ def acoustic_tokenization(
             processed_files_set = set()
     
     if kmeans is None:
-        kmeans = MiniBatchKMeans(n_clusters=num_clusters, batch_size=1024, random_state=42, n_init=3)
+        kmeans = MiniBatchKMeans(
+            n_clusters=num_clusters,
+            batch_size=KMEANS_BATCH_SIZE,
+            random_state=KMEANS_RANDOM_STATE,
+            n_init=KMEANS_N_INIT,
+        )
     
     files_to_process = [f for f in files if f not in processed_files_set]
     print(f"Files remaining: {len(files_to_process)}/{len(files)}")
@@ -481,7 +503,7 @@ def acoustic_tokenization(
             with open(f"{output_dir}/{name}.units.txt", "w") as txt:
                 txt.write(" ".join(map(str, units)))
             
-            if (idx + 1) % 500 == 0:
+            if (idx + 1) % PROGRESS_LOG_INTERVAL == 0:
                 with open(step2_checkpoint, 'w') as cp:
                     json.dump(corpus, cp)
                 audio_volume.commit()

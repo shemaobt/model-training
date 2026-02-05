@@ -63,6 +63,16 @@
 # %%
 import modal
 import os
+from src.constants import (
+    SAMPLE_RATE,
+    NUM_ACOUSTIC_UNITS,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_SAMPLES_PER_EPOCH,
+    LAMBDA_MEL,
+    MEL_N_FFT,
+    MEL_HOP_LENGTH,
+    MEL_N_MELS,
+)
 
 # %%
 app = modal.App("bible-vocoder-training")
@@ -360,12 +370,12 @@ class UnitAudioDataset(Dataset):
 def train_vocoder(
     epochs: int = 500,
     batch_size: int = 16,
-    learning_rate: float = 0.0002,
+    learning_rate: float = DEFAULT_LEARNING_RATE,
     save_every: int = 20,
     resume_from: str = None,
     patience: int = 50,
     min_delta: float = 0.5,
-    samples_per_epoch: int = 10000,
+    samples_per_epoch: int = DEFAULT_SAMPLES_PER_EPOCH,
     language: str = "portuguese",
 ):
     import torch
@@ -411,7 +421,7 @@ def train_vocoder(
     MultiScaleDiscriminator = disc_module.MultiScaleDiscriminator
     UnitAudioDataset = data_module.UnitAudioDataset
     
-    generator = Generator(num_units=100).to(device)
+    generator = Generator(num_units=NUM_ACOUSTIC_UNITS).to(device)
     discriminator = MultiScaleDiscriminator().to(device)
     
     print(f"Generator: {sum(p.numel() for p in generator.parameters()):,} params")
@@ -426,7 +436,7 @@ def train_vocoder(
     dataset = UnitAudioDataset(
         corpus_path=corpus_path,
         audio_dir=segmented_dir,
-        segment_length=16000,
+        segment_length=SAMPLE_RATE,
         samples_per_epoch=samples_per_epoch,
     )
     
@@ -465,7 +475,7 @@ def train_vocoder(
         fake_audio = fake_audio[..., :min_len]
         
         mel_transform = T.MelSpectrogram(
-            sample_rate=16000, n_fft=1024, hop_length=256, n_mels=80
+            sample_rate=SAMPLE_RATE, n_fft=MEL_N_FFT, hop_length=MEL_HOP_LENGTH, n_mels=MEL_N_MELS
         ).to(real_audio.device)
         
         return nn.L1Loss()(mel_transform(fake_audio), mel_transform(real_audio))
@@ -567,7 +577,7 @@ def train_vocoder(
             with torch.no_grad():
                 sample_audio = generator(units[:1]).squeeze().cpu().numpy()
                 sample_audio = (sample_audio * 32767).astype(np.int16)
-                write(os.path.join(vocoder_dir, f"sample_epoch_{epoch+1:04d}.wav"), 16000, sample_audio)
+                write(os.path.join(vocoder_dir, f"sample_epoch_{epoch+1:04d}.wav"), SAMPLE_RATE, sample_audio)
             generator.train()
             
             audio_volume.commit()

@@ -45,6 +45,12 @@ import modal
 import os
 import subprocess
 import sys
+from src.constants import (
+    SEGMENT_LENGTH,
+    DEFAULT_EPOCHS,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_PATIENCE,
+)
 
 # %%
 app = modal.App("full-training-pipeline")
@@ -57,10 +63,10 @@ def main(
     vocoder_version: str = "v2",
     detach: bool = True,
     skip_segmentation: bool = True,
-    epochs: int = 1000,
-    batch_size: int = 12,
-    segment_length: int = 32000,
-    patience: int = 100,
+    epochs: int = DEFAULT_EPOCHS,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    segment_length: int = SEGMENT_LENGTH,
+    patience: int = DEFAULT_PATIENCE,
 ):
     phase_list = [int(p.strip()) for p in phases.split(",")]
     
