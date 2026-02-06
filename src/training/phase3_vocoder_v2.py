@@ -58,6 +58,7 @@ import modal
 import os
 from src.constants import (
     SAMPLE_RATE,
+    DEFAULT_MODEL,
     HOP_SIZE,
     SEGMENT_LENGTH,
     NUM_ACOUSTIC_UNITS,
@@ -101,6 +102,7 @@ image = (
         "tensorboard>=2.14.0",
         "librosa>=0.10.0",
     )
+    .add_local_dir("src", remote_path="/root/src")
 )
 
 # %%
@@ -112,13 +114,13 @@ LANGUAGE_CONFIGS = {
         "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio",
         "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
         "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_checkpoints",
-        "corpus_file": "portuguese_corpus_timestamped.json",
+        "corpus_file_template": "{language}_corpus_timestamped_{model}.json",
     },
     "satere": {
         "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_satere",
         "output_dir": f"{AUDIO_MOUNT}/satere_units",
         "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_satere_checkpoints",
-        "corpus_file": "satere_corpus_timestamped.json",
+        "corpus_file_template": "{language}_corpus_timestamped_{model}.json",
     },
 }
 
@@ -527,6 +529,8 @@ def train_vocoder_v2(
     lambda_mel: float = LAMBDA_MEL,
     lambda_stft: float = LAMBDA_STFT,
     lambda_fm: float = LAMBDA_FM,
+    model_key: str = DEFAULT_MODEL,
+    language: str = "portuguese",
 ):
     import torch
     import torch.optim as optim
@@ -577,7 +581,8 @@ def train_vocoder_v2(
     print(f"Generator: {g_params:,} params")
     print(f"Discriminator: {d_params:,} params")
     
-    corpus_path = os.path.join(OUTPUT_DIR, "portuguese_corpus_timestamped.json")
+    corpus_filename = _config["corpus_file_template"].format(language=language, model=model_key)
+    corpus_path = os.path.join(OUTPUT_DIR, corpus_filename)
     if not os.path.exists(corpus_path):
         print(f"❌ Corpus not found at {corpus_path}")
         return None
@@ -616,15 +621,19 @@ def train_vocoder_v2(
     best_loss = float('inf')
     epochs_without_improvement = 0
     
-    if resume_from and os.path.exists(resume_from):
-        print(f"📥 Resuming from: {resume_from}")
-        ckpt = torch.load(resume_from, map_location=device)
-        generator.load_state_dict(ckpt['generator_state_dict'])
-        discriminator.load_state_dict(ckpt['discriminator_state_dict'])
-        optimizer_g.load_state_dict(ckpt['optimizer_g_state_dict'])
-        optimizer_d.load_state_dict(ckpt['optimizer_d_state_dict'])
-        start_epoch = ckpt.get('epoch', 0) + 1
-        best_loss = ckpt.get('best_loss', float('inf'))
+    if resume_from:
+        if os.path.exists(resume_from):
+            print(f"📥 Resuming from: {resume_from}")
+            ckpt = torch.load(resume_from, map_location=device)
+            generator.load_state_dict(ckpt['generator_state_dict'])
+            discriminator.load_state_dict(ckpt['discriminator_state_dict'])
+            optimizer_g.load_state_dict(ckpt['optimizer_g_state_dict'])
+            optimizer_d.load_state_dict(ckpt['optimizer_d_state_dict'])
+            start_epoch = ckpt.get('epoch', 0) + 1
+            best_loss = ckpt.get('best_loss', float('inf'))
+        else:
+            print(f"❌ Resume file not found: {resume_from}")
+            print("⚠️  Starting from scratch...")
     
     training_log = []
     
@@ -823,6 +832,7 @@ def main(
     lambda_mel: float = 45.0,
     lambda_stft: float = 2.0,
     lambda_fm: float = 2.0,
+    model: str = DEFAULT_MODEL,
 ):
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     vocoder_dir = config["vocoder_dir"]
@@ -830,6 +840,7 @@ def main(
     print("🎵 Starting Vocoder V2 Training")
     print("=" * 60)
     print(f"  Language: {language}")
+    print(f"  Model: {model}")
     print(f"  Segments: {config['segmented_dir']}")
     print(f"  Units: {config['output_dir']}")
     print(f"  Checkpoints: {vocoder_dir}")
@@ -861,6 +872,8 @@ def main(
         lambda_mel=lambda_mel,
         lambda_stft=lambda_stft,
         lambda_fm=lambda_fm,
+        model_key=model,
+        language=language,
     )
     
     if result:
