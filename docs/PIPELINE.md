@@ -103,7 +103,7 @@ python3 -m modal run scripts/upload_to_modal.py --language satere
 
 | Step | Process | Output |
 |------|---------|--------|
-| 1 | Load XLSR-53 model | Feature extractor |
+| 1 | Load Model (MMS-300M default) | Feature extractor |
 | 2 | Extract Layer 14 features | 1024-dim vectors per 20ms |
 | 3 | Fit K-Means (k=100) | Cluster centroids |
 | 4 | Predict cluster IDs | Unit sequences |
@@ -112,10 +112,13 @@ python3 -m modal run scripts/upload_to_modal.py --language satere
 ### Run Command
 
 ```bash
-# Portuguese (default)
+# Portuguese (default model: MMS-300M)
 python3 -m modal run --detach src/training/phase1_acoustic.py::main_skip_segmentation
 
-# Sateré
+# Use legacy XLSR-53
+python3 -m modal run --detach src/training/phase1_acoustic.py::main_skip_segmentation --model xlsr-53
+
+# Sateré (with default MMS-300M)
 python3 -m modal run --detach src/training/phase1_acoustic.py::main_skip_segmentation --language satere
 ```
 

@@ -47,7 +47,9 @@ import os
 from pathlib import Path
 from src.constants import (
     SAMPLE_RATE,
-    XLSR_LAYER,
+    SAMPLE_RATE,
+    ACOUSTIC_MODELS,
+    DEFAULT_MODEL,
     NUM_ACOUSTIC_UNITS,
     KMEANS_BATCH_SIZE,
     KMEANS_RANDOM_STATE,
@@ -87,6 +89,7 @@ image = (
         "numpy<2",
         "librosa>=0.10.0",
     )
+    .add_local_dir("src", remote_path="/root/src")
 )
 
 # %%
@@ -326,8 +329,8 @@ def segment_by_silence(
 )
 def acoustic_tokenization(
     language: str = "portuguese",
-    model_name: str = "facebook/wav2vec2-large-xlsr-53",
-    layer: int = XLSR_LAYER,
+    model_key: str = DEFAULT_MODEL,
+    layer: int = None, # Optional override
     num_clusters: int = NUM_ACOUSTIC_UNITS,
     buffer_limit: int = DEFAULT_BUFFER_LIMIT,
     checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
@@ -346,10 +349,21 @@ def acoustic_tokenization(
     segmented_dir = config["segmented_dir"]
     output_dir = config["output_dir"]
     
+    if model_key not in ACOUSTIC_MODELS:
+        raise ValueError(f"Unknown model: {model_key}. Available: {list(ACOUSTIC_MODELS.keys())}")
+    
+    model_config = ACOUSTIC_MODELS[model_key]
+    model_name = model_config["model_name"]
+    target_layer = layer if layer is not None else model_config["layer"]
+    
+    print(f"Configuration:")
+    print(f"  Model: {model_name} ({model_key})")
+    print(f"  Layer: {target_layer}")
+    
     os.makedirs(output_dir, exist_ok=True)
     
-    checkpoint_file = f"{output_dir}/checkpoint_kmeans.pkl"
-    processed_files_log = f"{output_dir}/processed_files_step1.txt"
+    checkpoint_file = f"{output_dir}/checkpoint_kmeans_{model_key}.pkl"
+    processed_files_log = f"{output_dir}/processed_files_step1_{model_key}.txt"
     
     print(f"Loading {model_name}...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -382,7 +396,7 @@ def acoustic_tokenization(
             with torch.no_grad():
                 outputs = w2v_model(inputs, output_hidden_states=True)
             
-            feats = outputs.hidden_states[layer].squeeze(0).cpu().numpy()
+            feats = outputs.hidden_states[target_layer].squeeze(0).cpu().numpy()
             torch.cuda.empty_cache()
             del inputs, outputs
             
@@ -462,7 +476,9 @@ def acoustic_tokenization(
         stacked = np.vstack(buffer)
         kmeans.partial_fit(stacked)
     
-    kmeans_output_file = f"{language}_kmeans.pkl"
+        kmeans.partial_fit(stacked)
+    
+    kmeans_output_file = f"{language}_kmeans_{model_key}.pkl"
     joblib.dump(kmeans, f"{output_dir}/{kmeans_output_file}")
     print("✓ Acoustic alphabet saved!")
     
@@ -500,7 +516,7 @@ def acoustic_tokenization(
                 "num_frames": len(units)
             }
             
-            with open(f"{output_dir}/{name}.units.txt", "w") as txt:
+            with open(f"{output_dir}/{name}.units_{model_key}.txt", "w") as txt:
                 txt.write(" ".join(map(str, units)))
             
             if (idx + 1) % PROGRESS_LOG_INTERVAL == 0:
@@ -514,11 +530,11 @@ def acoustic_tokenization(
             print(f"⚠️  Error tokenizing: {e}")
             continue
     
-    corpus_output_file = f"{language}_corpus_timestamped.json"
+    corpus_output_file = f"{language}_corpus_timestamped_{model_key}.json"
     with open(f"{output_dir}/{corpus_output_file}", "w") as f:
         json.dump(corpus, f)
     
-    with open(f"{output_dir}/all_units_for_bpe.txt", "w") as f:
+    with open(f"{output_dir}/all_units_for_bpe_{model_key}.txt", "w") as f:
         for data in corpus.values():
             f.write(" ".join(map(str, data["units"])) + "\n")
     
@@ -544,13 +560,14 @@ def acoustic_tokenization(
 
 # %%
 @app.local_entrypoint()
-def main(language: str = "portuguese"):
+def main(language: str = "portuguese", model: str = DEFAULT_MODEL):
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     
     print("🚀 Starting Bible Audio Processing Pipeline")
     print("=" * 50)
     print(f"  Language: {language}")
-    print(f"  Output: {config['output_dir']}")
+    print(f"  Model:    {model}")
+    print(f"  Output:   {config['output_dir']}")
     print("=" * 50)
     
     print("\n📁 Phase 1: Converting MP3 to WAV...")
@@ -562,7 +579,7 @@ def main(language: str = "portuguese"):
     print(f"✓ Created {segments} segments")
     
     print("\n🎵 Phase 1: Acoustic Tokenization...")
-    processed = acoustic_tokenization.remote(language=language)
+    processed = acoustic_tokenization.remote(language=language, model_key=model)
     print(f"✓ Processed {processed} segments")
     
     print("\n✅ Pipeline complete!")
@@ -570,14 +587,15 @@ def main(language: str = "portuguese"):
 
 # %%
 @app.local_entrypoint()
-def main_skip_segmentation(language: str = "portuguese"):
+def main_skip_segmentation(language: str = "portuguese", model: str = DEFAULT_MODEL):
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     
     print("🚀 Starting Pipeline (skip segmentation)")
     print("=" * 50)
     print(f"  Language: {language}")
+    print(f"  Model:    {model}")
     print(f"  Segments: {config['segmented_dir']}")
-    print(f"  Output: {config['output_dir']}")
+    print(f"  Output:   {config['output_dir']}")
     print("=" * 50)
     
     print("\n📁 Converting MP3 to WAV...")
@@ -587,7 +605,7 @@ def main_skip_segmentation(language: str = "portuguese"):
     print("\n✂️  SKIPPED: Using existing segments")
     
     print("\n🎵 Acoustic Tokenization...")
-    processed = acoustic_tokenization.remote(language=language)
+    processed = acoustic_tokenization.remote(language=language, model_key=model)
     print(f"✓ Processed {processed} segments")
     
     print("\n✅ Pipeline complete!")
