@@ -116,6 +116,12 @@ LANGUAGE_CONFIGS = {
         "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_checkpoints",
         "corpus_file_template": "{language}_corpus_timestamped_{model}.json",
     },
+    "english_fleurs": {
+        "segmented_dir": f"{AUDIO_MOUNT}/parallel_pt_en/segmented_audio_english_fleurs",
+        "output_dir": f"{AUDIO_MOUNT}/english_fleurs_units",
+        "vocoder_dir": f"{AUDIO_MOUNT}/vocoder_v2_english_fleurs_checkpoints",
+        "corpus_file_template": "{language}_corpus_timestamped_{model}.json",
+    },
     "satere": {
         "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_satere",
         "output_dir": f"{AUDIO_MOUNT}/satere_units",
@@ -514,7 +520,7 @@ def generator_adversarial_loss(fake_outputs):
     image=image,
     volumes={AUDIO_MOUNT: audio_volume},
     timeout=43200,  # 12 hours
-    gpu="A10G",
+    gpu="A100",  # Upgraded from A10G for faster training
 )
 def train_vocoder_v2(
     epochs: int = DEFAULT_EPOCHS,
@@ -553,8 +559,6 @@ def train_vocoder_v2(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     
-    os.makedirs(VOCODER_DIR, exist_ok=True)
-    
     def load_module(code, name):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(code)
@@ -581,8 +585,15 @@ def train_vocoder_v2(
     print(f"Generator: {g_params:,} params")
     print(f"Discriminator: {d_params:,} params")
     
-    corpus_filename = _config["corpus_file_template"].format(language=language, model=model_key)
-    corpus_path = os.path.join(OUTPUT_DIR, corpus_filename)
+    config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
+    output_dir = config["output_dir"]
+    segmented_dir = config["segmented_dir"]
+    vocoder_dir = config["vocoder_dir"]
+    
+    os.makedirs(vocoder_dir, exist_ok=True)
+    
+    corpus_filename = config["corpus_file_template"].format(language=language, model=model_key)
+    corpus_path = os.path.join(output_dir, corpus_filename)
     if not os.path.exists(corpus_path):
         print(f"❌ Corpus not found at {corpus_path}")
         return None
@@ -591,7 +602,7 @@ def train_vocoder_v2(
     
     dataset = UnitAudioPitchDataset(
         corpus_path=corpus_path,
-        audio_dir=SEGMENTED_DIR,
+        audio_dir=segmented_dir,
         segment_length=segment_length,
         hop_size=HOP_SIZE,
         samples_per_epoch=samples_per_epoch,
@@ -745,7 +756,7 @@ def train_vocoder_v2(
                 'optimizer_g_state_dict': optimizer_g.state_dict(),
                 'optimizer_d_state_dict': optimizer_d.state_dict(),
                 'best_loss': best_loss,
-            }, os.path.join(VOCODER_DIR, "v2_best.pt"))
+            }, os.path.join(vocoder_dir, "v2_best.pt"))
             audio_volume.commit()
         else:
             epochs_without_improvement += 1
@@ -757,7 +768,7 @@ def train_vocoder_v2(
         
         # Periodic checkpoints
         if (epoch + 1) % save_every == 0:
-            ckpt_path = os.path.join(VOCODER_DIR, f"v2_epoch_{epoch+1:04d}.pt")
+            ckpt_path = os.path.join(vocoder_dir, f"v2_epoch_{epoch+1:04d}.pt")
             torch.save({
                 'epoch': epoch,
                 'generator_state_dict': generator.state_dict(),
@@ -776,14 +787,14 @@ def train_vocoder_v2(
                 'optimizer_g_state_dict': optimizer_g.state_dict(),
                 'optimizer_d_state_dict': optimizer_d.state_dict(),
                 'best_loss': best_loss,
-            }, os.path.join(VOCODER_DIR, "v2_latest.pt"))
+            }, os.path.join(vocoder_dir, "v2_latest.pt"))
             
             # Generate sample
             generator.eval()
             with torch.no_grad():
                 sample = generator(units[:1], pitch[:1]).squeeze().cpu().numpy()
                 sample = (sample * 32767).astype(np.int16)
-                write(os.path.join(VOCODER_DIR, f"sample_v2_{epoch+1:04d}.wav"), SAMPLE_RATE, sample)
+                write(os.path.join(vocoder_dir, f"sample_v2_{epoch+1:04d}.wav"), SAMPLE_RATE, sample)
             generator.train()
             
             audio_volume.commit()
@@ -794,9 +805,9 @@ def train_vocoder_v2(
         'epoch': epoch,
         'generator_state_dict': generator.state_dict(),
         'training_log': training_log,
-    }, os.path.join(VOCODER_DIR, "v2_final.pt"))
+    }, os.path.join(vocoder_dir, "v2_final.pt"))
     
-    with open(os.path.join(VOCODER_DIR, "training_log_v2.json"), 'w') as f:
+    with open(os.path.join(vocoder_dir, "training_log_v2.json"), 'w') as f:
         json.dump(training_log, f, indent=2)
     
     audio_volume.commit()
