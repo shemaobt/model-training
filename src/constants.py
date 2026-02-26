@@ -47,11 +47,17 @@ ACOUSTIC_MODELS = {
         "layer": 24,  # Deeper model, middle-to-late layers usually best
         "dim": 1280,
         "description": "MMS 1B parameters (High quality, high resource)"
+    },
+    "xeus": {
+        "model_name": "espnet/xeus",
+        "layer": 14,
+        "dim": 1024,
+        "description": "XEUS multilingual speech representations"
     }
 }
 
 # Default Model Selection
-DEFAULT_MODEL = "mms-300m"
+DEFAULT_MODEL = "xeus"
 
 # Acoustic tokenization
 NUM_ACOUSTIC_UNITS = 100

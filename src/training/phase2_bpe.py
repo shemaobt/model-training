@@ -84,6 +84,11 @@ LANGUAGE_CONFIGS = {
         "phase2_output_dir": f"{AUDIO_MOUNT}/phase2_output",
         "bpe_prefix": "portuguese_bpe",
     },
+    "english": {
+        "output_dir": f"{AUDIO_MOUNT}/english_units",
+        "phase2_output_dir": f"{AUDIO_MOUNT}/phase2_english_output",
+        "bpe_prefix": "english_bpe",
+    },
     "satere": {
         "output_dir": f"{AUDIO_MOUNT}/satere_units",
         "phase2_output_dir": f"{AUDIO_MOUNT}/phase2_satere_output",
