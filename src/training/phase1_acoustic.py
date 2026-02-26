@@ -75,19 +75,21 @@ audio_volume = modal.Volume.from_name(
 
 # %%
 image = (
-    modal.Image.debian_slim()
-    .apt_install("ffmpeg", "libsndfile1")
+    modal.Image.debian_slim(python_version="3.10")
+    .apt_install("ffmpeg", "libsndfile1", "git")
     .pip_install(
         "torch>=2.0.0",
         "torchaudio>=2.0.0",
         "transformers>=4.40.0",
-        "sentencepiece>=0.1.99",
+        "huggingface_hub>=0.23.0",
+        "espnet @ git+https://github.com/wanchichen/espnet.git@ssl",
+        "sentencepiece==0.1.97",
         "scikit-learn>=1.3.0",
         "joblib>=1.3.0",
         "soundfile>=0.12.0",
         "tqdm>=4.66.0",
         "numpy<2",
-        "librosa>=0.10.0",
+        "librosa==0.9.2",
     )
     .add_local_dir("src", remote_path="/root/src")
 )
@@ -101,6 +103,24 @@ LANGUAGE_CONFIGS = {
         "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
         "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio",
         "converted_dir": f"{AUDIO_MOUNT}/converted_audio",
+    },
+    "english": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_english",
+        "output_dir": f"{AUDIO_MOUNT}/english_units",
+        "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio_english",
+        "converted_dir": f"{AUDIO_MOUNT}/converted_audio_english",
+    },
+    "portuguese_fleurs": {
+        "segmented_dir": f"{AUDIO_MOUNT}/parallel_pt_en/segmented_audio_portuguese_fleurs",
+        "output_dir": f"{AUDIO_MOUNT}/portuguese_fleurs_units",
+        "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio_portuguese_fleurs",
+        "converted_dir": f"{AUDIO_MOUNT}/converted_audio_portuguese_fleurs",
+    },
+    "english_fleurs": {
+        "segmented_dir": f"{AUDIO_MOUNT}/parallel_pt_en/segmented_audio_english_fleurs",
+        "output_dir": f"{AUDIO_MOUNT}/english_fleurs_units",
+        "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio_english_fleurs",
+        "converted_dir": f"{AUDIO_MOUNT}/converted_audio_english_fleurs",
     },
     "satere": {
         "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_satere",
@@ -324,7 +344,7 @@ def segment_by_silence(
 @app.function(
     image=image,
     volumes={AUDIO_MOUNT: audio_volume},
-    timeout=14400,
+    timeout=21600,  # 6 hours (increased from 4h for large datasets)
     gpu="A10G",
 )
 def acoustic_tokenization(
@@ -340,7 +360,8 @@ def acoustic_tokenization(
     import numpy as np
     import joblib
     import json
-    from transformers import Wav2Vec2Model, Wav2Vec2FeatureExtractor
+    from huggingface_hub import snapshot_download
+    from torch.nn.utils.rnn import pad_sequence
     from sklearn.cluster import MiniBatchKMeans
     from tqdm import tqdm
     import traceback
@@ -369,9 +390,86 @@ def acoustic_tokenization(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using: {device}")
     
-    extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
-    w2v_model = Wav2Vec2Model.from_pretrained(model_name).to(device)
-    w2v_model.eval()
+    extractor = None
+    w2v_model = None
+    xeus_model = None
+    xeus_mode = model_key == "xeus"
+    if xeus_mode:
+        from espnet2.tasks.ssl import SSLTask
+        import yaml
+
+        xeus_repo_path = snapshot_download(repo_id=model_name)
+        config_path = os.path.join(xeus_repo_path, "model", "config.yaml")
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"XEUS config not found at {config_path}")
+
+        with open(config_path, "r") as file:
+            xeus_config = yaml.safe_load(file)
+        if isinstance(xeus_config.get("frontend_conf"), dict):
+            xeus_config["frontend_conf"].pop("normalize_output", None)
+        if isinstance(xeus_config.get("loss"), list) and xeus_config["loss"]:
+            first_loss = xeus_config["loss"][0]
+            if isinstance(first_loss, dict):
+                xeus_config["loss"] = first_loss.get("name")
+                xeus_config["loss_conf"] = first_loss.get("conf", {})
+        xeus_config.setdefault("masker", "hubert")
+        xeus_config.setdefault(
+            "masker_conf",
+            {
+                "mask_prob": 0.8,
+                "mask_selection": "static",
+                "mask_other": 0.0,
+                "mask_length": 10,
+                "no_mask_overlap": False,
+                "mask_min_space": 1,
+                "mask_channel_prob": 0.0,
+                "mask_channel_selection": "static",
+                "mask_channel_other": 0.0,
+                "mask_channel_length": 10,
+                "no_mask_channel_overlap": False,
+                "mask_channel_min_space": 1,
+            },
+        )
+        compat_config_path = os.path.join(xeus_repo_path, "model", "config_compat.yaml")
+        with open(compat_config_path, "w") as file:
+            yaml.safe_dump(xeus_config, file)
+
+        candidate_checkpoints = [
+            os.path.join(xeus_repo_path, "model", "xeus_checkpoint_old.pth"),
+            os.path.join(xeus_repo_path, "model", "xeus_checkpoint_new.pth"),
+        ]
+        selected_checkpoint = None
+        last_error = None
+        for checkpoint_path in candidate_checkpoints:
+            if not os.path.exists(checkpoint_path):
+                continue
+            try:
+                import argparse
+
+                args = argparse.Namespace(**xeus_config)
+                xeus_model = SSLTask.build_model(args)
+                checkpoint = torch.load(checkpoint_path, map_location=str(device))
+                state_dict = checkpoint.get("model", checkpoint.get("state_dict", checkpoint))
+                xeus_model.load_state_dict(state_dict, strict=False)
+                xeus_model = xeus_model.to(device)
+                selected_checkpoint = checkpoint_path
+                break
+            except Exception as exc:
+                import traceback as _traceback
+
+                print(f"Failed XEUS checkpoint load: {checkpoint_path}")
+                _traceback.print_exc()
+                last_error = exc
+        if selected_checkpoint is None:
+            raise RuntimeError(f"Unable to load XEUS checkpoint. Last error: {last_error}")
+        xeus_model.eval()
+        print(f"Using XEUS checkpoint: {selected_checkpoint}")
+    else:
+        from transformers import Wav2Vec2Model, Wav2Vec2FeatureExtractor
+
+        extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
+        w2v_model = Wav2Vec2Model.from_pretrained(model_name).to(device)
+        w2v_model.eval()
     print("✓ Model loaded!")
     
     def get_features(path):
@@ -390,15 +488,34 @@ def acoustic_tokenization(
             
             duration = len(waveform_data) / SAMPLE_RATE
             
-            inputs = extractor(waveform_data, return_tensors="pt", sampling_rate=SAMPLE_RATE)
-            inputs = inputs.input_values.to(device)
-            
-            with torch.no_grad():
-                outputs = w2v_model(inputs, output_hidden_states=True)
-            
-            feats = outputs.hidden_states[target_layer].squeeze(0).cpu().numpy()
+            if xeus_mode:
+                wav_tensor = torch.tensor(waveform_data, dtype=torch.float32, device=device)
+                wav_lengths = torch.LongTensor([wav_tensor.numel()]).to(device)
+                wavs = pad_sequence([wav_tensor], batch_first=True)
+                with torch.no_grad():
+                    encoded = xeus_model.encode(
+                        wavs,
+                        wav_lengths,
+                        use_mask=False,
+                        use_final_output=False,
+                    )
+                hidden_states = encoded[0]
+                layer_idx = target_layer if target_layer >= 0 else (len(hidden_states) + target_layer)
+                layer_idx = min(max(layer_idx, 0), len(hidden_states) - 1)
+                feats = hidden_states[layer_idx].squeeze(0).detach().cpu().numpy()
+            else:
+                inputs = extractor(waveform_data, return_tensors="pt", sampling_rate=SAMPLE_RATE)
+                inputs = inputs.input_values.to(device)
+
+                with torch.no_grad():
+                    outputs = w2v_model(inputs, output_hidden_states=True)
+
+                feats = outputs.hidden_states[target_layer].squeeze(0).cpu().numpy()
             torch.cuda.empty_cache()
-            del inputs, outputs
+            if xeus_mode:
+                del wav_tensor, wav_lengths, wavs, encoded
+            else:
+                del inputs, outputs
             
             timestamps = np.linspace(0, duration, feats.shape[0])
             return feats, timestamps, duration
