@@ -53,10 +53,11 @@ from src.constants import (
     BPE_MAX_SENTENCE_LENGTH,
     BPE_NUM_THREADS,
     BPE_VOCAB_RETRY_FACTOR,
+    DEFAULT_MODEL,
 )
 
 # %%
-app = modal.App("bible-audio-training")
+app = modal.App("bible-audio-training-bpe")
 
 audio_volume = modal.Volume.from_name(
     "bible-audio-data",
@@ -71,6 +72,7 @@ image = (
         "tqdm>=4.66.0",
         "numpy<2",
     )
+    .add_local_dir("src", remote_path="/root/src")
 )
 
 # %%
@@ -81,6 +83,11 @@ LANGUAGE_CONFIGS = {
         "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
         "phase2_output_dir": f"{AUDIO_MOUNT}/phase2_output",
         "bpe_prefix": "portuguese_bpe",
+    },
+    "english": {
+        "output_dir": f"{AUDIO_MOUNT}/english_units",
+        "phase2_output_dir": f"{AUDIO_MOUNT}/phase2_english_output",
+        "bpe_prefix": "english_bpe",
     },
     "satere": {
         "output_dir": f"{AUDIO_MOUNT}/satere_units",
@@ -113,6 +120,7 @@ def train_bpe_tokenizer(
     min_frequency: int = DEFAULT_BPE_MIN_FREQUENCY,
     language: str = "portuguese",
     force_retrain: bool = False,
+    model_key: str = DEFAULT_MODEL,
 ):
     import sentencepiece as spm
     from tqdm import tqdm
@@ -121,12 +129,12 @@ def train_bpe_tokenizer(
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     output_dir = config["output_dir"]
     phase2_output_dir = config["phase2_output_dir"]
-    bpe_prefix = config["bpe_prefix"]
+    bpe_prefix = f"{config['bpe_prefix']}_{model_key}"
     
     os.makedirs(phase2_output_dir, exist_ok=True)
     
     model_prefix = os.path.join(phase2_output_dir, bpe_prefix)
-    checkpoint_path = os.path.join(phase2_output_dir, "training_checkpoint.json")
+    checkpoint_path = os.path.join(phase2_output_dir, f"training_checkpoint_{model_key}.json")
     
     if not force_retrain and os.path.exists(f"{model_prefix}.model") and os.path.exists(checkpoint_path):
         with open(checkpoint_path, 'r') as f:
@@ -138,7 +146,7 @@ def train_bpe_tokenizer(
             print(f"   Vocabulary: {checkpoint['vocab_size']}")
             return checkpoint
     
-    units_file = os.path.join(output_dir, "all_units_for_bpe.txt")
+    units_file = os.path.join(output_dir, f"all_units_for_bpe_{model_key}.txt")
     
     if not os.path.exists(units_file):
         print(f"❌ Phase 1 output not found: {units_file}")
@@ -247,7 +255,7 @@ def train_bpe_tokenizer(
     volumes={AUDIO_MOUNT: audio_volume},
     timeout=1800,
 )
-def analyze_motifs(language: str = "portuguese"):
+def analyze_motifs(language: str = "portuguese", model_key: str = DEFAULT_MODEL):
     import sentencepiece as spm
     from collections import Counter
     import json
@@ -255,7 +263,7 @@ def analyze_motifs(language: str = "portuguese"):
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     output_dir = config["output_dir"]
     phase2_output_dir = config["phase2_output_dir"]
-    bpe_prefix = config["bpe_prefix"]
+    bpe_prefix = f"{config['bpe_prefix']}_{model_key}"
     
     model_path = os.path.join(phase2_output_dir, f"{bpe_prefix}.model")
     
@@ -268,7 +276,7 @@ def analyze_motifs(language: str = "portuguese"):
     sp.load(model_path)
     print(f"✓ Model loaded (vocab: {sp.get_piece_size()})")
     
-    units_file = os.path.join(output_dir, "all_units_for_bpe.txt")
+    units_file = os.path.join(output_dir, f"all_units_for_bpe_{model_key}.txt")
     
     print("\n🔍 Analyzing motifs...")
     all_encoded = []
@@ -290,7 +298,7 @@ def analyze_motifs(language: str = "portuguese"):
     
     top_motifs = motif_counts.most_common(50)
     
-    analysis_path = os.path.join(phase2_output_dir, "motif_analysis.json")
+    analysis_path = os.path.join(phase2_output_dir, f"motif_analysis_{model_key}.json")
     with open(analysis_path, 'w') as f:
         json.dump({
             "total_tokens": total_tokens,
@@ -327,12 +335,14 @@ def main(
     vocab_size: int = 500,
     min_frequency: int = 5,
     force_retrain: bool = False,
+    model: str = DEFAULT_MODEL,
 ):
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     
     print("🚀 Starting Phase 2: BPE Tokenizer Training")
     print("=" * 60)
     print(f"  Language: {language}")
+    print(f"  Model: {model}")
     print(f"  Input: {config['output_dir']}")
     print(f"  Output: {config['phase2_output_dir']}")
     print(f"  Force retrain: {force_retrain}")
@@ -344,6 +354,7 @@ def main(
         min_frequency=min_frequency,
         language=language,
         force_retrain=force_retrain,
+        model_key=model,
     )
     
     if result:
@@ -352,7 +363,7 @@ def main(
         print(f"   Vocabulary: {result['vocab_size']} tokens")
         
         print("\n📊 Step 2: Analyzing motifs...")
-        analysis = analyze_motifs.remote(language=language)
+        analysis = analyze_motifs.remote(language=language, model_key=model)
         
         if analysis:
             print(f"✓ Analysis complete!")

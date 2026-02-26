@@ -47,7 +47,9 @@ import os
 from pathlib import Path
 from src.constants import (
     SAMPLE_RATE,
-    XLSR_LAYER,
+    SAMPLE_RATE,
+    ACOUSTIC_MODELS,
+    DEFAULT_MODEL,
     NUM_ACOUSTIC_UNITS,
     KMEANS_BATCH_SIZE,
     KMEANS_RANDOM_STATE,
@@ -73,20 +75,23 @@ audio_volume = modal.Volume.from_name(
 
 # %%
 image = (
-    modal.Image.debian_slim()
-    .apt_install("ffmpeg", "libsndfile1")
+    modal.Image.debian_slim(python_version="3.10")
+    .apt_install("ffmpeg", "libsndfile1", "git")
     .pip_install(
         "torch>=2.0.0",
         "torchaudio>=2.0.0",
         "transformers>=4.40.0",
-        "sentencepiece>=0.1.99",
+        "huggingface_hub>=0.23.0",
+        "espnet @ git+https://github.com/wanchichen/espnet.git@ssl",
+        "sentencepiece==0.1.97",
         "scikit-learn>=1.3.0",
         "joblib>=1.3.0",
         "soundfile>=0.12.0",
         "tqdm>=4.66.0",
         "numpy<2",
-        "librosa>=0.10.0",
+        "librosa==0.9.2",
     )
+    .add_local_dir("src", remote_path="/root/src")
 )
 
 # %%
@@ -98,6 +103,24 @@ LANGUAGE_CONFIGS = {
         "output_dir": f"{AUDIO_MOUNT}/portuguese_units",
         "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio",
         "converted_dir": f"{AUDIO_MOUNT}/converted_audio",
+    },
+    "english": {
+        "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_english",
+        "output_dir": f"{AUDIO_MOUNT}/english_units",
+        "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio_english",
+        "converted_dir": f"{AUDIO_MOUNT}/converted_audio_english",
+    },
+    "portuguese_fleurs": {
+        "segmented_dir": f"{AUDIO_MOUNT}/parallel_pt_en/segmented_audio_portuguese_fleurs",
+        "output_dir": f"{AUDIO_MOUNT}/portuguese_fleurs_units",
+        "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio_portuguese_fleurs",
+        "converted_dir": f"{AUDIO_MOUNT}/converted_audio_portuguese_fleurs",
+    },
+    "english_fleurs": {
+        "segmented_dir": f"{AUDIO_MOUNT}/parallel_pt_en/segmented_audio_english_fleurs",
+        "output_dir": f"{AUDIO_MOUNT}/english_fleurs_units",
+        "raw_audio_dir": f"{AUDIO_MOUNT}/raw_audio_english_fleurs",
+        "converted_dir": f"{AUDIO_MOUNT}/converted_audio_english_fleurs",
     },
     "satere": {
         "segmented_dir": f"{AUDIO_MOUNT}/segmented_audio_satere",
@@ -321,13 +344,13 @@ def segment_by_silence(
 @app.function(
     image=image,
     volumes={AUDIO_MOUNT: audio_volume},
-    timeout=14400,
+    timeout=21600,  # 6 hours (increased from 4h for large datasets)
     gpu="A10G",
 )
 def acoustic_tokenization(
     language: str = "portuguese",
-    model_name: str = "facebook/wav2vec2-large-xlsr-53",
-    layer: int = XLSR_LAYER,
+    model_key: str = DEFAULT_MODEL,
+    layer: int = None, # Optional override
     num_clusters: int = NUM_ACOUSTIC_UNITS,
     buffer_limit: int = DEFAULT_BUFFER_LIMIT,
     checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
@@ -337,7 +360,8 @@ def acoustic_tokenization(
     import numpy as np
     import joblib
     import json
-    from transformers import Wav2Vec2Model, Wav2Vec2FeatureExtractor
+    from huggingface_hub import snapshot_download
+    from torch.nn.utils.rnn import pad_sequence
     from sklearn.cluster import MiniBatchKMeans
     from tqdm import tqdm
     import traceback
@@ -346,18 +370,106 @@ def acoustic_tokenization(
     segmented_dir = config["segmented_dir"]
     output_dir = config["output_dir"]
     
+    if model_key not in ACOUSTIC_MODELS:
+        raise ValueError(f"Unknown model: {model_key}. Available: {list(ACOUSTIC_MODELS.keys())}")
+    
+    model_config = ACOUSTIC_MODELS[model_key]
+    model_name = model_config["model_name"]
+    target_layer = layer if layer is not None else model_config["layer"]
+    
+    print(f"Configuration:")
+    print(f"  Model: {model_name} ({model_key})")
+    print(f"  Layer: {target_layer}")
+    
     os.makedirs(output_dir, exist_ok=True)
     
-    checkpoint_file = f"{output_dir}/checkpoint_kmeans.pkl"
-    processed_files_log = f"{output_dir}/processed_files_step1.txt"
+    checkpoint_file = f"{output_dir}/checkpoint_kmeans_{model_key}.pkl"
+    processed_files_log = f"{output_dir}/processed_files_step1_{model_key}.txt"
     
     print(f"Loading {model_name}...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using: {device}")
     
-    extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
-    w2v_model = Wav2Vec2Model.from_pretrained(model_name).to(device)
-    w2v_model.eval()
+    extractor = None
+    w2v_model = None
+    xeus_model = None
+    xeus_mode = model_key == "xeus"
+    if xeus_mode:
+        from espnet2.tasks.ssl import SSLTask
+        import yaml
+
+        xeus_repo_path = snapshot_download(repo_id=model_name)
+        config_path = os.path.join(xeus_repo_path, "model", "config.yaml")
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"XEUS config not found at {config_path}")
+
+        with open(config_path, "r") as file:
+            xeus_config = yaml.safe_load(file)
+        if isinstance(xeus_config.get("frontend_conf"), dict):
+            xeus_config["frontend_conf"].pop("normalize_output", None)
+        if isinstance(xeus_config.get("loss"), list) and xeus_config["loss"]:
+            first_loss = xeus_config["loss"][0]
+            if isinstance(first_loss, dict):
+                xeus_config["loss"] = first_loss.get("name")
+                xeus_config["loss_conf"] = first_loss.get("conf", {})
+        xeus_config.setdefault("masker", "hubert")
+        xeus_config.setdefault(
+            "masker_conf",
+            {
+                "mask_prob": 0.8,
+                "mask_selection": "static",
+                "mask_other": 0.0,
+                "mask_length": 10,
+                "no_mask_overlap": False,
+                "mask_min_space": 1,
+                "mask_channel_prob": 0.0,
+                "mask_channel_selection": "static",
+                "mask_channel_other": 0.0,
+                "mask_channel_length": 10,
+                "no_mask_channel_overlap": False,
+                "mask_channel_min_space": 1,
+            },
+        )
+        compat_config_path = os.path.join(xeus_repo_path, "model", "config_compat.yaml")
+        with open(compat_config_path, "w") as file:
+            yaml.safe_dump(xeus_config, file)
+
+        candidate_checkpoints = [
+            os.path.join(xeus_repo_path, "model", "xeus_checkpoint_old.pth"),
+            os.path.join(xeus_repo_path, "model", "xeus_checkpoint_new.pth"),
+        ]
+        selected_checkpoint = None
+        last_error = None
+        for checkpoint_path in candidate_checkpoints:
+            if not os.path.exists(checkpoint_path):
+                continue
+            try:
+                import argparse
+
+                args = argparse.Namespace(**xeus_config)
+                xeus_model = SSLTask.build_model(args)
+                checkpoint = torch.load(checkpoint_path, map_location=str(device))
+                state_dict = checkpoint.get("model", checkpoint.get("state_dict", checkpoint))
+                xeus_model.load_state_dict(state_dict, strict=False)
+                xeus_model = xeus_model.to(device)
+                selected_checkpoint = checkpoint_path
+                break
+            except Exception as exc:
+                import traceback as _traceback
+
+                print(f"Failed XEUS checkpoint load: {checkpoint_path}")
+                _traceback.print_exc()
+                last_error = exc
+        if selected_checkpoint is None:
+            raise RuntimeError(f"Unable to load XEUS checkpoint. Last error: {last_error}")
+        xeus_model.eval()
+        print(f"Using XEUS checkpoint: {selected_checkpoint}")
+    else:
+        from transformers import Wav2Vec2Model, Wav2Vec2FeatureExtractor
+
+        extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
+        w2v_model = Wav2Vec2Model.from_pretrained(model_name).to(device)
+        w2v_model.eval()
     print("✓ Model loaded!")
     
     def get_features(path):
@@ -376,15 +488,34 @@ def acoustic_tokenization(
             
             duration = len(waveform_data) / SAMPLE_RATE
             
-            inputs = extractor(waveform_data, return_tensors="pt", sampling_rate=SAMPLE_RATE)
-            inputs = inputs.input_values.to(device)
-            
-            with torch.no_grad():
-                outputs = w2v_model(inputs, output_hidden_states=True)
-            
-            feats = outputs.hidden_states[layer].squeeze(0).cpu().numpy()
+            if xeus_mode:
+                wav_tensor = torch.tensor(waveform_data, dtype=torch.float32, device=device)
+                wav_lengths = torch.LongTensor([wav_tensor.numel()]).to(device)
+                wavs = pad_sequence([wav_tensor], batch_first=True)
+                with torch.no_grad():
+                    encoded = xeus_model.encode(
+                        wavs,
+                        wav_lengths,
+                        use_mask=False,
+                        use_final_output=False,
+                    )
+                hidden_states = encoded[0]
+                layer_idx = target_layer if target_layer >= 0 else (len(hidden_states) + target_layer)
+                layer_idx = min(max(layer_idx, 0), len(hidden_states) - 1)
+                feats = hidden_states[layer_idx].squeeze(0).detach().cpu().numpy()
+            else:
+                inputs = extractor(waveform_data, return_tensors="pt", sampling_rate=SAMPLE_RATE)
+                inputs = inputs.input_values.to(device)
+
+                with torch.no_grad():
+                    outputs = w2v_model(inputs, output_hidden_states=True)
+
+                feats = outputs.hidden_states[target_layer].squeeze(0).cpu().numpy()
             torch.cuda.empty_cache()
-            del inputs, outputs
+            if xeus_mode:
+                del wav_tensor, wav_lengths, wavs, encoded
+            else:
+                del inputs, outputs
             
             timestamps = np.linspace(0, duration, feats.shape[0])
             return feats, timestamps, duration
@@ -462,7 +593,9 @@ def acoustic_tokenization(
         stacked = np.vstack(buffer)
         kmeans.partial_fit(stacked)
     
-    kmeans_output_file = f"{language}_kmeans.pkl"
+        kmeans.partial_fit(stacked)
+    
+    kmeans_output_file = f"{language}_kmeans_{model_key}.pkl"
     joblib.dump(kmeans, f"{output_dir}/{kmeans_output_file}")
     print("✓ Acoustic alphabet saved!")
     
@@ -500,7 +633,7 @@ def acoustic_tokenization(
                 "num_frames": len(units)
             }
             
-            with open(f"{output_dir}/{name}.units.txt", "w") as txt:
+            with open(f"{output_dir}/{name}.units_{model_key}.txt", "w") as txt:
                 txt.write(" ".join(map(str, units)))
             
             if (idx + 1) % PROGRESS_LOG_INTERVAL == 0:
@@ -514,11 +647,11 @@ def acoustic_tokenization(
             print(f"⚠️  Error tokenizing: {e}")
             continue
     
-    corpus_output_file = f"{language}_corpus_timestamped.json"
+    corpus_output_file = f"{language}_corpus_timestamped_{model_key}.json"
     with open(f"{output_dir}/{corpus_output_file}", "w") as f:
         json.dump(corpus, f)
     
-    with open(f"{output_dir}/all_units_for_bpe.txt", "w") as f:
+    with open(f"{output_dir}/all_units_for_bpe_{model_key}.txt", "w") as f:
         for data in corpus.values():
             f.write(" ".join(map(str, data["units"])) + "\n")
     
@@ -544,13 +677,14 @@ def acoustic_tokenization(
 
 # %%
 @app.local_entrypoint()
-def main(language: str = "portuguese"):
+def main(language: str = "portuguese", model: str = DEFAULT_MODEL):
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     
     print("🚀 Starting Bible Audio Processing Pipeline")
     print("=" * 50)
     print(f"  Language: {language}")
-    print(f"  Output: {config['output_dir']}")
+    print(f"  Model:    {model}")
+    print(f"  Output:   {config['output_dir']}")
     print("=" * 50)
     
     print("\n📁 Phase 1: Converting MP3 to WAV...")
@@ -562,7 +696,7 @@ def main(language: str = "portuguese"):
     print(f"✓ Created {segments} segments")
     
     print("\n🎵 Phase 1: Acoustic Tokenization...")
-    processed = acoustic_tokenization.remote(language=language)
+    processed = acoustic_tokenization.remote(language=language, model_key=model)
     print(f"✓ Processed {processed} segments")
     
     print("\n✅ Pipeline complete!")
@@ -570,14 +704,15 @@ def main(language: str = "portuguese"):
 
 # %%
 @app.local_entrypoint()
-def main_skip_segmentation(language: str = "portuguese"):
+def main_skip_segmentation(language: str = "portuguese", model: str = DEFAULT_MODEL):
     config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
     
     print("🚀 Starting Pipeline (skip segmentation)")
     print("=" * 50)
     print(f"  Language: {language}")
+    print(f"  Model:    {model}")
     print(f"  Segments: {config['segmented_dir']}")
-    print(f"  Output: {config['output_dir']}")
+    print(f"  Output:   {config['output_dir']}")
     print("=" * 50)
     
     print("\n📁 Converting MP3 to WAV...")
@@ -587,7 +722,7 @@ def main_skip_segmentation(language: str = "portuguese"):
     print("\n✂️  SKIPPED: Using existing segments")
     
     print("\n🎵 Acoustic Tokenization...")
-    processed = acoustic_tokenization.remote(language=language)
+    processed = acoustic_tokenization.remote(language=language, model_key=model)
     print(f"✓ Processed {processed} segments")
     
     print("\n✅ Pipeline complete!")

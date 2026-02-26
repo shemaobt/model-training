@@ -103,12 +103,12 @@ Extracts features from audio and learns a discrete vocabulary of 100 sounds.
 
 ```mermaid
 flowchart LR
-    A[Audio Segment] -->|XLSR-53 Layer 14| B[1024-dim Vectors]
+    A[Audio Segment] -->|MMS-300M / XLSR-53| B[1024-dim Vectors]
     B -->|K-Means| C[Cluster Centroids]
     B -->|Nearest Neighbor| D[Unit Sequence]
 ```
 
-> **Note**: We currently use XLSR-53 for feature extraction. Meta's newer **MMS** model (1,400+ languages) may provide better representations for low-resource languages. See [docs/MMS_VS_XLSR53.md](docs/MMS_VS_XLSR53.md) for a detailed comparison and migration guide.
+> **Note**: We use **MMS-300M** (Massively Multilingual Speech) as the default feature extractor, which provides better representation for low-resource languages than the legacy XLSR-53. You can still switch to XLSR-53 using the `--model` flag. See [docs/MMS_VS_XLSR53.md](docs/MMS_VS_XLSR53.md) for details.
 
 ### Phase 2: Pattern Discovery (BPE)
 Analyzes the sequence of units to find recurring motifs (acoustic "words").
@@ -174,7 +174,11 @@ python3 -m modal run src/training/run_full_pipeline.py::main --vocoder-version v
 #### Option B: Run Phases Individually
 ```bash
 # Phase 1: Discover acoustic units (~2-4 hours)
+# Default: MMS-300M
 python3 -m modal run --detach src/training/phase1_acoustic.py
+
+# OR use legacy XLSR-53
+python3 -m modal run --detach src/training/phase1_acoustic.py --model xlsr-53
 
 # Phase 2: Learn motifs/BPE (~30 min)
 python3 -m modal run --detach src/training/phase2_bpe.py

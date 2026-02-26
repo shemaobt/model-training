@@ -24,9 +24,40 @@
 SAMPLE_RATE = 16000
 HOP_SIZE = 320  # XLSR-53 frame rate: ~20ms at 16kHz
 
-# XLSR-53 feature extraction
+# XLSR-53 feature extraction (Legacy Default)
 XLSR_LAYER = 14
 XLSR_FEATURE_DIM = 1024
+
+# Acoustic Model Configurations
+ACOUSTIC_MODELS = {
+    "xlsr-53": {
+        "model_name": "facebook/wav2vec2-large-xlsr-53",
+        "layer": 14,
+        "dim": 1024,
+        "description": "Cross-lingual Speech Representations (53 languages)"
+    },
+    "mms-300m": {
+        "model_name": "facebook/mms-300m",
+        "layer": 14,  # Aligns with XLSR-53 depth for phonetic features
+        "dim": 1024,
+        "description": "Massively Multilingual Speech (1,400+ languages)"
+    },
+    "mms-1b": {
+        "model_name": "facebook/mms-1b",
+        "layer": 24,  # Deeper model, middle-to-late layers usually best
+        "dim": 1280,
+        "description": "MMS 1B parameters (High quality, high resource)"
+    },
+    "xeus": {
+        "model_name": "espnet/xeus",
+        "layer": 14,
+        "dim": 1024,
+        "description": "XEUS multilingual speech representations"
+    }
+}
+
+# Default Model Selection
+DEFAULT_MODEL = "xeus"
 
 # Acoustic tokenization
 NUM_ACOUSTIC_UNITS = 100

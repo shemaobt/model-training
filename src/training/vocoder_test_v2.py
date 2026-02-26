@@ -63,6 +63,7 @@ image = (
         "tqdm",
         "librosa>=0.10.0",
     )
+    .add_local_dir("src", remote_path="/root/src")
 )
 
 # %%
@@ -191,7 +192,7 @@ class GeneratorV2(nn.Module):
     timeout=3600,
     gpu="A10G",
 )
-def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
+def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt", language: str = "portuguese", model_key: str = "mms-300m"):
     import torch
     import numpy as np
     import soundfile as sf
@@ -206,10 +207,17 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     print("🔬 Vocoder V2 Quality Test")
     print("=" * 60)
     
+    config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["portuguese"])
+    segmented_dir = config["segmented_dir"]
+    output_dir = config["output_dir"]
+    vocoder_dir = config["vocoder_dir"]
+    test_output_dir = config["test_output_dir"]
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
+    print(f"Language: {language}")
     
-    os.makedirs(TEST_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(test_output_dir, exist_ok=True)
     
     def load_module(code, name):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
@@ -225,10 +233,10 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     
     generator = GeneratorV2(num_units=NUM_ACOUSTIC_UNITS, num_pitch_bins=NUM_PITCH_BINS).to(device)
     
-    ckpt_path = os.path.join(VOCODER_DIR, checkpoint)
+    ckpt_path = os.path.join(vocoder_dir, checkpoint)
     if not os.path.exists(ckpt_path):
         print(f"❌ Checkpoint not found: {ckpt_path}")
-        ckpt_path = os.path.join(VOCODER_DIR, "v2_latest.pt")
+        ckpt_path = os.path.join(vocoder_dir, "v2_latest.pt")
         if not os.path.exists(ckpt_path):
             print(f"❌ No V2 checkpoint found!")
             return None
@@ -239,7 +247,7 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
     generator.eval()
     print(f"✓ Generator loaded (epoch {ckpt.get('epoch', '?')})")
     
-    corpus_path = os.path.join(OUTPUT_DIR, "portuguese_corpus_timestamped.json")
+    corpus_path = os.path.join(output_dir, f"{language}_corpus_timestamped_{model_key}.json")
     with open(corpus_path, 'r') as f:
         corpus = json.load(f)
     
@@ -262,7 +270,7 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
         
         audio_path = None
         for ext in ['.wav', '.WAV']:
-            p = os.path.join(SEGMENTED_DIR, segment_name + ext)
+            p = os.path.join(segmented_dir, segment_name + ext)
             if os.path.exists(p):
                 audio_path = p
                 break
@@ -348,11 +356,11 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             
             if idx < 20:
                 write(
-                    os.path.join(TEST_OUTPUT_DIR, f"v2_synth_{idx:04d}.wav"),
+                    os.path.join(test_output_dir, f"v2_synth_{idx:04d}.wav"),
                     SAMPLE_RATE, (synth_audio * 32767).astype(np.int16)
                 )
                 write(
-                    os.path.join(TEST_OUTPUT_DIR, f"v2_orig_{idx:04d}.wav"),
+                    os.path.join(test_output_dir, f"v2_orig_{idx:04d}.wav"),
                     SAMPLE_RATE, (orig_seg * 32767).astype(np.int16)
                 )
             
@@ -401,7 +409,7 @@ def test_vocoder_v2(num_samples: int = 50, checkpoint: str = "v2_best.pt"):
             print("    ❌ Poor pitch accuracy (> 50 Hz)")
     print("=" * 60)
     
-    with open(os.path.join(TEST_OUTPUT_DIR, "test_results_v2.json"), 'w') as f:
+    with open(os.path.join(test_output_dir, "test_results_v2.json"), 'w') as f:
         json.dump(results, f, indent=2)
     
     audio_volume.commit()
@@ -424,7 +432,7 @@ def main(language: str = "portuguese", num_samples: int = 50, checkpoint: str = 
     print(f"  Samples: {num_samples}")
     print(f"  Checkpoint: {config['vocoder_dir']}/{checkpoint}")
     
-    results = test_vocoder_v2.remote(num_samples=num_samples, checkpoint=checkpoint)
+    results = test_vocoder_v2.remote(num_samples=num_samples, checkpoint=checkpoint, language=language)
     
     if results:
         m = results['aggregate_metrics']
