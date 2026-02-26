@@ -37,15 +37,8 @@ local_segments/
 local_segments_*/
 audio_data/
 
-# modal_downloads - keep small analysis files, ignore large ones
-modal_downloads/phase1_outputs/
-modal_downloads/sample_audio/
-
-# Vocoder - keep test samples, ignore large checkpoints
-modal_downloads/vocoder/*.pt
-modal_downloads/vocoder/sample_epoch_*.wav
-
-# Keep vocoder test comparison samples (small)
+# modal_downloads - keep only vocoder_test comparison samples
+modal_downloads/
 !modal_downloads/vocoder_test/
 
 # Large binary files
